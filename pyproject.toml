@@ -1,0 +1,13 @@
+# uv **virtual** workspace root — this root ships no code, so it has no [project].
+# It exists only to bind the Python services into one uv workspace with a single
+# shared lockfile (uv.lock) and one shared .venv.
+#
+# Members:
+#   services/control-plane — FastAPI web API (control tier)
+#   services/agent         — privileged host agent (control tier)
+#
+# The frontend (apps/*) and shared JS packages (packages/*) are a *separate*
+# pnpm workspace — see pnpm-workspace.yaml. Python version is pinned in
+# .python-version and each member's requires-python.
+[tool.uv.workspace]
+members = ["services/control-plane", "services/agent"]

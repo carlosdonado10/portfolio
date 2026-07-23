@@ -1,0 +1,57 @@
+# Portfolio platform — reproducible deploy on the Oracle VM (linux/arm64).
+#
+#   docker compose build && docker compose up -d
+#
+# Three platform services: landing, control-plane, agent. The security boundary
+# is STRUCTURAL — only `agent` mounts the Docker socket; the web-facing services
+# physically have no route to it in this file.
+name: portfolio-platform
+
+services:
+  landing:
+    build:
+      context: .
+      dockerfile: apps/landing/Dockerfile
+    image: portfolio/landing:dev
+    ports:
+      - "${LANDING_PORT:-8080}:80"
+    networks: [platform]
+    restart: unless-stopped
+
+  control-plane:
+    build:
+      context: .
+      dockerfile: services/control-plane/Dockerfile
+    image: portfolio/control-plane:dev
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${CONTROL_PLANE_PORT:-8000}:8000"
+    networks: [platform]
+    restart: unless-stopped
+    # NO volumes. The control-plane MUST NOT reach the Docker socket.
+
+  agent:
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    image: portfolio/agent:dev
+    env_file:
+      - path: .env
+        required: false
+    # The ONLY service granted the Docker socket. This privileged control-tier
+    # component brings the ML app stacks (each its own repo) up/down at runtime.
+    volumes:
+      - "${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock"
+    networks: [platform]
+    restart: unless-stopped
+
+networks:
+  platform:
+    driver: bridge
+
+# Documented seams — intentionally NOT in this compose:
+#   * reverse proxy + forward-auth (Caddy/Traefik + TLS)  -> WS0.2 (infra/proxy)
+#   * Supabase (Postgres + Auth)                           -> managed, OFF-BOX; env only (.env)
+#   * the five ML apps                                     -> each its own repo, agent-managed, own compose
