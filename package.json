@@ -1,0 +1,15 @@
+{
+  "name": "portfolio-platform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Portfolio platform monorepo root (pnpm workspace: landing app + shared JS packages). Python services live in the sibling uv workspace.",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev:web": "pnpm --filter @portfolio/landing dev",
+    "build:web": "pnpm --filter @portfolio/landing build",
+    "preview:web": "pnpm --filter @portfolio/landing preview"
+  }
+}

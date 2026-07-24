@@ -1,0 +1,27 @@
+# Keep build contexts lean and avoid leaking host-built artifacts into images.
+.git
+.gitignore
+.trail
+
+# Node / pnpm
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.pnpm-store
+
+# Python / uv
+**/.venv
+.venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Local env & docs (secrets never enter an image)
+.env
+.env.*
+!.env.example
+docs
+README.md
+Makefile
