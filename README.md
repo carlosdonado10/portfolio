@@ -122,3 +122,7 @@ Architecture decisions are recorded as ADRs in
 - [0003 — Node & Python version pins](docs/decisions/0003-node-and-python-version-pins.md)
 - [0004 — Docker Compose topology & socket isolation](docs/decisions/0004-docker-compose-topology-and-socket-isolation.md)
 - [0005 — Platform repo boundary](docs/decisions/0005-platform-repo-boundary.md)
+
+## Changelog
+
+Notable changes are tracked in [`CHANGELOG.md`](CHANGELOG.md).
