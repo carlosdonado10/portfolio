@@ -178,15 +178,20 @@ Force-stop, clear queue, view sessions/emails/visit log, view agent observed sta
 
 ## 7. Project contract (what every project must provide)
 
-Each project is a folder `projects/<id>/` (it can be a git submodule or symlink to the project's own
-repo) containing:
+Per ADR 0005, each project's code lives in **its own repo**. This repo holds only a registry of
+manifests: `projects/<id>/stack.toml`. `orchctl prepare` clones or fetches each project's repo at the
+pinned `ref` into `$ORCH_REPOS_DIR/<id>` (default `/srv/orch/repos/<id>`) and builds its images there.
+The repos are not vendored and not submodules. A manifest without `repo` points at a compose file in
+its own folder (used by the in-repo examples only).
 
 ```toml
 # projects/<id>/stack.toml
 id = "rag-pipeline"                 # url-safe, unique; becomes /p/rag-pipeline/
 name = "RAG Pipeline"
 tagline = "Retrieval-augmented QA over …"
-compose = "docker-compose.yml"      # relative to this folder
+repo = "https://github.com/<owner>/rag-pipeline.git"   # optional; omit for in-repo examples
+ref = "v1.2.0"                      # tag/branch/sha checked out by `orchctl prepare`
+compose = "docker-compose.yml"      # relative to the repo root (or this folder if no repo)
 entry = { service = "web", port = 8000 }   # what nginx proxies /p/<id>/ to
 health = { path = "/healthz", timeout_s = 180, interval_s = 3 }  # relative to entry
 expected_boot_s = 90                # shown as ETA on the interstitial
@@ -243,16 +248,20 @@ Decisions made in conversation (2026-11-15):
 Monorepo at the repo root (per existing tooling conventions):
 
 ```
-apps/lab/                     # orchestrator UI (Vite react-ts, pnpm)
-services/control-plane/       # FastAPI, SQLite  (uv workspace member)
-services/agent/               # reconciler       (uv workspace member)
+apps/lab/                     # orchestrator UI (Vite react-ts, pnpm); renamed from the scaffold's apps/landing
+services/common/              # shared manifest model + wire schemas + orchctl (new uv member)
+services/control-plane/       # FastAPI, SQLite  (existing uv member, package control_plane)
+services/agent/               # reconciler       (existing uv member, package agent)
 packages/notify-client/       # injected JS
 packages/design-system/       # (separate workstream; lab consumes it when ready)
-infra/nginx/                  # base config + templates rendered from manifests
-infra/compose.yml             # nginx + control-plane + agent + networks
+infra/proxy/                  # nginx gateway: base config + templates rendered from manifests (WS0.2 seam)
+docker-compose.yml            # existing root compose: nginx + control-plane + agent + networks
 projects/                     # manifests (+ _examples)
 docs/
 ```
+
+Builds on the WS-P0.1 scaffold already on `main` (ADRs 0001–0005). Target platform is **linux/arm64**
+(Oracle Ampere A1). Supabase wiring from the scaffold is removed.
 
 Python: uv workspace, pinned Python, ruff + mypy. JS/TS: pnpm, pinned Node LTS, ESLint + Prettier,
 strict TS. Root pre-commit with a secrets scanner. CI runs the same checks plus tests.
