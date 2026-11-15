@@ -1,0 +1,27 @@
+# Backstop for the local hooks: `git commit --no-verify` skips pre-commit locally,
+# but it can't skip this. Same config, same pinned tool versions (uv.lock).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: Run all hooks
+        # no-commit-to-branch only makes sense for local commits.
+        env:
+          SKIP: no-commit-to-branch
+        run: uv run --frozen pre-commit run --all-files --show-diff-on-failure

@@ -1,6 +1,5 @@
-from fastapi.testclient import TestClient
-
 from control_plane.app import app
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 
