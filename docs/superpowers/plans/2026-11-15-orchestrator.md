@@ -24,7 +24,7 @@
 - The agent always runs `docker compose up -d --no-build`. It never builds at visitor time.
 - No orchestrator code may name a specific project.
 - Every user-facing status/notification string explains the engineering reason (copy is a deliverable). Example: *"Booting rag-pipeline. The box has 2 CPUs, so only one project runs at a time; you'll get it to yourself for 15 minutes once it's serving."*
-- Commits use Conventional Commits and end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Commits use Conventional Commits (enforced by the commit-msg hook). No attribution trailers.
 
 ## Review Focus
 
