@@ -1,21 +1,30 @@
-# Portfolio platform — reproducible deploy on the Oracle VM (linux/arm64).
+# Portfolio platform: reproducible deploy on the Oracle VM (linux/arm64).
 #
-#   docker compose build && docker compose up -d
+#   make up        # creates the orch-stacks network, then compose up -d --build
 #
-# Three platform services: lab, control-plane, agent. The security boundary
-# is STRUCTURAL — only `agent` mounts the Docker socket; the web-facing services
-# physically have no route to it in this file.
+# Three services: proxy (nginx gateway + lab UI), control-plane, agent. Only the
+# proxy publishes a host port. The security boundary is STRUCTURAL: only `agent`
+# mounts the Docker socket, and the control-plane joins `orch-internal` only.
+#
+# Project stacks (each its own compose, run by the agent as `orch-<id>`) attach
+# to the external `orch-stacks` network with the alias `<id>-entry`.
 name: portfolio-platform
 
 services:
-  lab:
+  proxy:
     build:
       context: .
-      dockerfile: apps/lab/Dockerfile
-    image: portfolio/lab:dev
+      dockerfile: infra/proxy/Dockerfile
+    image: portfolio/proxy:dev
     ports:
-      - "${LAB_PORT:-8080}:80"
-    networks: [platform]
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      # Written by `make render` (orchctl render-nginx); reload nginx after a change.
+      - "./infra/proxy/generated:/etc/nginx/generated:ro"
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    networks: [orch-internal, orch-stacks]
     restart: unless-stopped
 
   control-plane:
@@ -23,34 +32,68 @@ services:
       context: .
       dockerfile: services/control-plane/Dockerfile
     image: portfolio/control-plane:dev
-    env_file:
-      - path: .env
-        required: false
-    ports:
-      - "${CONTROL_PLANE_PORT:-8000}:8000"
-    networks: [platform]
+    environment:
+      ORCH_DB_PATH: /data/orch.sqlite
+      ORCH_PROJECTS_DIR: "${ORCH_PROJECTS_DIR:?set ORCH_PROJECTS_DIR (absolute path) in .env}"
+      ORCH_INCLUDE_HIDDEN: "${ORCH_INCLUDE_HIDDEN:-0}"
+      ORCH_COOKIE_SECRET: "${ORCH_COOKIE_SECRET:?set ORCH_COOKIE_SECRET in .env}"
+      ORCH_OWNER_SECRET: "${ORCH_OWNER_SECRET:?set ORCH_OWNER_SECRET in .env}"
+      ORCH_COOKIE_SECURE: "${ORCH_COOKIE_SECURE:-true}"
+      ORCH_PUBLIC_BASE_URL: "${ORCH_PUBLIC_BASE_URL:-}"
+      ORCH_RESEND_API_KEY: "${ORCH_RESEND_API_KEY:-}"
+      ORCH_EMAIL_FROM: "${ORCH_EMAIL_FROM:-}"
+      ORCH_LEASE__WINDOW_S: "${ORCH_LEASE__WINDOW_S:-900}"
+      ORCH_LEASE__GRACE_S: "${ORCH_LEASE__GRACE_S:-180}"
+      ORCH_LEASE__IDLE_S: "${ORCH_LEASE__IDLE_S:-180}"
+      ORCH_LEASE__PRESENCE_S: "${ORCH_LEASE__PRESENCE_S:-120}"
+    volumes:
+      # Named volume: inherits the image's /data ownership (user orch). A bind
+      # mount here would need `chown 10001` on the host directory.
+      - "orch-data:/data"
+      # Manifests, read-only, at the same path the agent sees.
+      - "${ORCH_PROJECTS_DIR}:${ORCH_PROJECTS_DIR}:ro"
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [orch-internal]
     restart: unless-stopped
-    # NO volumes. The control-plane MUST NOT reach the Docker socket.
+    # NO socket mount, NO host ports.
 
   agent:
     build:
       context: .
       dockerfile: services/agent/Dockerfile
     image: portfolio/agent:dev
-    env_file:
-      - path: .env
-        required: false
-    # The ONLY service granted the Docker socket. This privileged control-tier
-    # component brings the ML app stacks (each its own repo) up/down at runtime.
+    environment:
+      ORCH_CONTROL_PLANE_URL: http://control-plane:8001
+      ORCH_PROJECTS_DIR: "${ORCH_PROJECTS_DIR}"
+      ORCH_REPOS_DIR: "${ORCH_REPOS_DIR:?set ORCH_REPOS_DIR (absolute path) in .env}"
+      ORCH_INCLUDE_HIDDEN: "${ORCH_INCLUDE_HIDDEN:-0}"
+    # The ONLY service granted the Docker socket. Projects and repos are mounted
+    # at IDENTICAL host paths: the socket belongs to the host daemon, so relative
+    # bind mounts in a project's compose resolve against host paths.
     volumes:
       - "${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock"
-    networks: [platform]
+      - "${ORCH_PROJECTS_DIR}:${ORCH_PROJECTS_DIR}"
+      - "${ORCH_REPOS_DIR}:${ORCH_REPOS_DIR}"
+    networks: [orch-internal, orch-stacks]
     restart: unless-stopped
+    # No published ports.
 
 networks:
-  platform:
-    driver: bridge
+  # Control-plane <-> agent <-> proxy. No route to the outside world.
+  orch-internal:
+    internal: true
+  # Shared with project stacks; created by `make up` (docker network create).
+  orch-stacks:
+    external: true
+    name: orch-stacks
 
-# Documented seams — intentionally NOT in this compose:
-#   * reverse proxy + forward-auth (Caddy/Traefik + TLS)  -> WS0.2 (infra/proxy)
-#   * the five ML apps                                     -> each its own repo, agent-managed, own compose
+volumes:
+  orch-data:

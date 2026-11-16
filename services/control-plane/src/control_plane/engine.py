@@ -65,7 +65,7 @@ class Engine:
         clock: Callable[[], float] = time.time,
         public_base_url: str = "",
     ) -> "Engine":
-        # Visitors could not heartbeat while we were down, so presence/idle
+        # Visitors could not send presence while we were down, so presence/idle
         # timestamps are stale by the outage length: rebase them to now. The
         # window and grace clocks keep their wall-clock meaning, untouched.
         now = clock()

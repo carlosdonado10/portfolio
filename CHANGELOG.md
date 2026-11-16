@@ -13,6 +13,16 @@ in their own repos and are not tracked here (see
 
 ### Added
 
+- **Gateway and compose.** `infra/proxy` builds an nginx image that serves the lab at
+  `/lab/`, proxies `/api/` (SSE unbuffered) and gates each `/p/<id>/` per request, injecting
+  the notify-client into HTML. `/internal/` and `/agent/` return 404. Root
+  `docker-compose.yml` is now `proxy` + `control-plane` + `agent` on `orch-internal` and the
+  external `orch-stacks` network; only the proxy publishes a port (`HTTP_PORT`).
+- **Example projects** `projects/_examples/fast` and `slow` (stdlib HTTP servers that turn
+  healthy after 2s and 20s), an end-to-end test (`make e2e`), and
+  `docs/adding-a-project.md`.
+- **Makefile targets** `render`, `prepare`, `e2e`; `make up` creates `orch-stacks`.
+
 - **Quality gates.** Pre-commit hooks (black, ruff, mypy strict, pytest with an
   80% coverage floor, vulture, gitleaks, Conventional Commits) and a CI backstop
   that also builds the pnpm workspace.
@@ -67,6 +77,8 @@ in their own repos and are not tracked here (see
 
 ### Removed
 
+- `apps/lab/Dockerfile` and `apps/lab/nginx.conf` (the proxy image builds and serves the lab);
+  the `LAB_PORT` and `CONTROL_PLANE_PORT` variables.
 - Supabase wiring: the `supabase/` placeholder, the `.env.example` block and the
   compose note (see ADR 0006).
 - The `packages/design-system` placeholder; it returns with its workstream.

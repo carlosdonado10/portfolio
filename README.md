@@ -30,17 +30,21 @@ in this repo's `docker-compose.yml`. See
 ```text
 portfolio/
 ├── apps/
-│   └── lab/               # Vite react-ts lab app (@portfolio/lab)
+│   └── lab/               # Vite react-ts lab app (@portfolio/lab), served at /lab/
 ├── packages/
-│   └── notify-client/     # PLACEHOLDER — @portfolio/notify-client (WS5.4)
+│   └── notify-client/     # @portfolio/notify-client: SSE toasts + activity beats, injected into projects
 ├── services/
-│   ├── common/            # uv member — orch_common (shared models + orchctl)
-│   ├── control-plane/     # uv member — FastAPI web API (GET /api/health; agent API :8001)
-│   └── agent/             # uv member — privileged host agent (reconciler)
-├── infra/proxy/           # PLACEHOLDER — reverse proxy + forward-auth (WS0.2)
-├── docs/decisions/        # ADRs (0001–0006)
-├── docker-compose.yml     # 3 platform services; only agent gets the Docker socket
-├── Makefile               # unified install / dev / build / up / down
+│   ├── common/            # uv member: orch_common (manifest model, wire schemas, orchctl)
+│   ├── control-plane/     # uv member: FastAPI API, lease/queue engine (agent API :8001)
+│   └── agent/             # uv member: privileged host agent (reconciler)
+├── infra/proxy/           # nginx gateway image, config, snippets, generated routes
+├── projects/              # project manifests (stack.toml); _examples/ = fast + slow demos
+├── tests/integration/     # end-to-end test against the real compose stack (make e2e)
+├── docs/
+│   ├── decisions/         # ADRs
+│   └── adding-a-project.md  # onboarding checklist for a new project
+├── docker-compose.yml     # proxy + control-plane + agent; only agent gets the Docker socket
+├── Makefile               # unified install / dev / render / prepare / up / down / e2e
 ├── pnpm-workspace.yaml    # pnpm workspace: apps/*, packages/*
 └── pyproject.toml         # uv virtual workspace: services/*
 ```
@@ -81,21 +85,32 @@ uv run --package control-plane python -m control_plane.main   # needs ORCH_* env
 uv run --package agent python -m agent
 ```
 
-## Containerized deploy (reproducible, the Oracle VM)
+## Quickstart: run the whole platform (Docker)
 
 ```bash
-cp .env.example .env    # adjust ports if needed; .env is gitignored
-make build              # docker compose build   (lab, control-plane, agent)
-make up                 # docker compose up -d
+cp .env.example .env     # set both secrets; for local http also ORCH_COOKIE_SECURE=false
+                         # and ORCH_INCLUDE_HIDDEN=1 to see the example projects
+make render prepare up   # routes, project images, then the platform
+open http://localhost:8080/lab/
 make down
 ```
 
-Default ports: lab `:8080`, control-plane `:8000` (override via `.env`).
+- `make render` writes `infra/proxy/generated/projects.conf` from the manifests in
+  `ORCH_PROJECTS_DIR` (default `./projects`).
+- `make prepare` clones project repos and builds their images. Images are never built at
+  visitor time.
+- `make up` creates the external `orch-stacks` network if missing, then
+  `docker compose up -d --build`. Only the nginx proxy publishes a port (`HTTP_PORT`,
+  default 8080).
+- `make e2e` brings the stack up with short lease timings and runs the integration tests
+  (needs Docker; tears everything down afterwards).
+
+To add a project, see [`docs/adding-a-project.md`](docs/adding-a-project.md).
 
 ### Target architecture — `linux/arm64` (Oracle Ampere A1)
 
 All base images are multi-arch (`node:24-slim`, `python:3.13-slim`,
-`nginx:alpine`). Build **on the box**, or cross-build from an x86 machine:
+`nginx:1.27-alpine`). Build **on the box**, or cross-build from an x86 machine:
 
 ```bash
 docker buildx build --platform linux/arm64 -f services/control-plane/Dockerfile .
@@ -104,7 +119,7 @@ docker buildx build --platform linux/arm64 -f services/control-plane/Dockerfile 
 ### Socket isolation (structural security boundary)
 
 Only the **agent** service bind-mounts `/var/run/docker.sock`. The web-facing
-`lab` and `control-plane` have **no route to the socket in the compose file**
+`proxy` and `control-plane` have **no route to the socket in the compose file**
 — the isolation is topology, not policy. Verify:
 
 ```bash

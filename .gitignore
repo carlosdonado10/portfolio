@@ -169,3 +169,6 @@ infra/proxy/generated/*.conf
 
 # Local dev state (make dev-cp)
 .dev/
+
+# Temporary manifest created by the e2e test
+projects/_e2e/

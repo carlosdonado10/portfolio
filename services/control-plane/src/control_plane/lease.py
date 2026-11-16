@@ -100,7 +100,7 @@ class Activity:
 
 @dataclass(frozen=True)
 class Seen:
-    """SSE heartbeat or connection."""
+    """SSE ping or connection."""
 
     sid: str
     now: float

@@ -46,7 +46,7 @@ repos:
       - id: forbid-env-files
         name: forbid committing .env files (only .env.example is allowed)
         language: fail
-        entry: ".env files hold secrets and must never be committed. Put placeholders in .env.example instead."
+        entry: ".env files hold secrets and must never be committed. Put example values in .env.example instead."
         files: '(^|/)\.env(\..+)?$'
         exclude: '(^|/)\.env\.example$'
 
