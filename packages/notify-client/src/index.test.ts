@@ -107,7 +107,7 @@ describe("renderToast", () => {
     vi.advanceTimersByTime(8001)
     expect(a.isConnected).toBe(false)
     expect(b.isConnected).toBe(true)
-    b.querySelector("button")!.click()
+    b.querySelector("button")?.click()
     expect(b.isConnected).toBe(false)
   })
 })
@@ -128,7 +128,7 @@ describe("start", () => {
     teardown = start()
     FakeES.last.emit({ type: "queue_changed", stack_id: null, title: "q", body: "q" })
     FakeES.last.emit({ type: "your_turn", stack_id: "a", title: "Hello", body: "b" })
-    const root = document.querySelector("orch-notify")!.shadowRoot!
+    const root = (document.querySelector("orch-notify")?.shadowRoot as ShadowRoot)
     expect(root.querySelectorAll(".toast")).toHaveLength(1)
     expect(root.textContent).toContain("Hello")
   })

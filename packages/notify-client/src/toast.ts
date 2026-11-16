@@ -28,7 +28,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid #f0b89f; outline-offs
 const dismissers = new WeakMap<HTMLElement, () => void>()
 const SUPERSEDES_GRACE = new Set(["grace_cancelled", "your_turn", "stack_ready", "evicted", "stack_failed"])
 
-export const PERSISTENT = new Set(["grace_started", "evicted"])
+const PERSISTENT = new Set(["grace_started", "evicted"])
 const AUTO_DISMISS_MS = 8000
 
 function ensureStack(root: ShadowRoot): HTMLElement {

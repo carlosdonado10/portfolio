@@ -99,3 +99,19 @@ repos:
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
+
+  # --- JS/TS: lint + dead code ----------------------------------------------
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint (strict TypeScript, react-hooks)
+        language: system
+        entry: pnpm exec eslint --max-warnings=0
+        types_or: [ts, tsx]
+
+      - id: knip
+        name: knip (unused files, exports, dependencies)
+        language: system
+        entry: pnpm exec knip
+        types_or: [ts, tsx, json]
+        pass_filenames: false
