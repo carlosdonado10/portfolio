@@ -1,7 +1,7 @@
 # Portfolio Platform
 
-The **platform** repo for the portfolio system: the landing page, the control
-tier (a web API + a privileged host agent), and auth wiring. It is a monorepo
+The **platform** repo for the portfolio system: the lab front end, the control
+tier (a web API + a privileged host agent), and the shared orchestrator package. It is a monorepo
 that binds two native toolchains — **pnpm** (frontend + shared JS packages) and
 **uv** (Python services) — with a **Docker Compose** path for reproducible
 deployment on the Oracle Cloud ARM box.
@@ -10,12 +10,14 @@ deployment on the Oracle Cloud ARM box.
 
 This repo is **only** the platform:
 
-- **Landing page** — `apps/landing` (Vite + React + TypeScript).
+- **Lab app** — `apps/lab` (Vite + React + TypeScript), served at `/lab/`.
 - **Control tier** — `services/control-plane` (web API) and `services/agent`
   (privileged host agent). The agent is the trusted half of the control tier and
   lives here.
-- **Auth** — an explicit pillar, wired at this stage as **Supabase connection env
-  only** (`.env.example`). Auth schema/logic is WS0.3; forward-auth proxy is WS0.2.
+- **Shared package** — `services/common` (`orch_common`: manifest model, wire
+  schemas, `orchctl` CLI).
+- **No login** — visitors get an anonymous signed cookie
+  ([ADR 0006](docs/decisions/0006-orchestrator-no-login-single-domain.md)).
 
 **Each portfolio/ML application lives in its own separate repo.** The agent
 clones/pulls those repos and runs *their* compose one-at-a-time via the Docker
@@ -28,16 +30,15 @@ in this repo's `docker-compose.yml`. See
 ```text
 portfolio/
 ├── apps/
-│   └── landing/           # Vite react-ts landing app (@portfolio/landing)
+│   └── lab/               # Vite react-ts lab app (@portfolio/lab)
 ├── packages/
-│   ├── design-system/     # PLACEHOLDER — @portfolio/design-system (WS-DS.0)
 │   └── notify-client/     # PLACEHOLDER — @portfolio/notify-client (WS5.4)
 ├── services/
+│   ├── common/            # uv member — orch_common (shared models + orchctl)
 │   ├── control-plane/     # uv member — FastAPI web API (GET /health)
 │   └── agent/             # uv member — privileged host agent (heartbeat)
 ├── infra/proxy/           # PLACEHOLDER — reverse proxy + forward-auth (WS0.2)
-├── supabase/              # PLACEHOLDER — managed, off-box auth + state (WS0.3)
-├── docs/decisions/        # ADRs (0001–0005)
+├── docs/decisions/        # ADRs (0001–0006)
 ├── docker-compose.yml     # 3 platform services; only agent gets the Docker socket
 ├── Makefile               # unified install / dev / build / up / down
 ├── pnpm-workspace.yaml    # pnpm workspace: apps/*, packages/*
@@ -65,7 +66,7 @@ portfolio/
 
 ```bash
 make install      # pnpm install + uv sync
-make dev-web      # landing app        → http://localhost:5173
+make dev-web      # lab app            → http://localhost:5173
 make dev-cp       # control-plane API  → http://localhost:8000  (GET /health)
 make dev-agent    # agent heartbeat loop
 make test         # Python test suites
@@ -75,7 +76,7 @@ Equivalent raw commands (no Make):
 
 ```bash
 pnpm install && uv sync
-pnpm --filter @portfolio/landing dev
+pnpm --filter @portfolio/lab dev
 uv run --package control-plane uvicorn control_plane.app:app --reload
 uv run --package agent python -m agent
 ```
@@ -83,13 +84,13 @@ uv run --package agent python -m agent
 ## Containerized deploy (reproducible, the Oracle VM)
 
 ```bash
-cp .env.example .env    # fill in Supabase values; .env is gitignored
-make build              # docker compose build   (landing, control-plane, agent)
+cp .env.example .env    # adjust ports if needed; .env is gitignored
+make build              # docker compose build   (lab, control-plane, agent)
 make up                 # docker compose up -d
 make down
 ```
 
-Default ports: landing `:8080`, control-plane `:8000` (override via `.env`).
+Default ports: lab `:8080`, control-plane `:8000` (override via `.env`).
 
 ### Target architecture — `linux/arm64` (Oracle Ampere A1)
 
@@ -103,7 +104,7 @@ docker buildx build --platform linux/arm64 -f services/control-plane/Dockerfile 
 ### Socket isolation (structural security boundary)
 
 Only the **agent** service bind-mounts `/var/run/docker.sock`. The web-facing
-`landing` and `control-plane` have **no route to the socket in the compose file**
+`lab` and `control-plane` have **no route to the socket in the compose file**
 — the isolation is topology, not policy. Verify:
 
 ```bash

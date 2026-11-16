@@ -18,10 +18,11 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Workspace resolution needs the root manifest, the lockfile, and every member.
 COPY pyproject.toml uv.lock .python-version ./
+COPY services/common services/common
 COPY services/control-plane services/control-plane
 COPY services/agent services/agent
 
-# Install only the agent package's environment (stdlib-only for now).
+# Install only the agent package's environment.
 RUN uv sync --frozen --package agent
 
 CMD ["uv", "run", "--frozen", "--package", "agent", "python", "-m", "agent"]

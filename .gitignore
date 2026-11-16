@@ -163,3 +163,6 @@ skills-lock.json
 .claude/skills/
 # Separate repo (personal portfolio site) that happens to live in this folder
 PortfolioLanding/
+
+# Generated nginx routing (written by the control plane)
+infra/proxy/generated/*.conf

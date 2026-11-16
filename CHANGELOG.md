@@ -13,6 +13,14 @@ in their own repos and are not tracked here (see
 
 ### Added
 
+- **Quality gates.** Pre-commit hooks (black, ruff, mypy strict, pytest with an
+  80% coverage floor, vulture, gitleaks, Conventional Commits) and a CI backstop
+  that also builds the pnpm workspace.
+- **`orch-common` package** (`services/common`, import `orch_common`): skeleton of
+  the shared manifest model, wire schemas and the `orchctl` CLI.
+- **ADR 0006**: no login, single domain with path routing, manifest registry
+  ([ADR 0006](docs/decisions/0006-orchestrator-no-login-single-domain.md)).
+
 - **Two-workspace monorepo.** One `make install` provisions both toolchains — a
   pnpm workspace (`apps/*`, `packages/*`) and a uv workspace (`services/*`) — from
   a single clone.
@@ -48,8 +56,17 @@ in their own repos and are not tracked here (see
 
 ### Changed
 
+- **`apps/landing` is now `apps/lab`** (`@portfolio/lab`); the compose service is
+  `lab` and its port variable is `LAB_PORT`.
+
 - **README** rewritten from a one-line stub into full platform documentation: repo
   boundary, layout, version-pin table, native and containerized run commands, and
   the socket-isolation verification.
 - **`.gitignore`** extended with Python/uv entries (`.venv/`, `__pycache__/`,
   `*.py[cod]`, tooling caches) alongside the existing Node ignores.
+
+### Removed
+
+- Supabase wiring: the `supabase/` placeholder, the `.env.example` block and the
+  compose note (see ADR 0006).
+- The `packages/design-system` placeholder; it returns with its workstream.

@@ -17,6 +17,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Workspace resolution needs the root manifest, the lockfile, and every member.
 COPY pyproject.toml uv.lock .python-version ./
+COPY services/common services/common
 COPY services/control-plane services/control-plane
 COPY services/agent services/agent
 

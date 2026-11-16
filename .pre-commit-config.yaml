@@ -75,7 +75,7 @@ repos:
       - id: mypy
         name: mypy (strict, service sources)
         language: system
-        entry: uv run --frozen mypy services/control-plane/src services/agent/src
+        entry: uv run --frozen mypy services/common/src services/control-plane/src services/agent/src
         types: [python]
         pass_filenames: false
 

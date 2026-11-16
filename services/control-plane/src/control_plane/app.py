@@ -1,8 +1,8 @@
 """Control-plane FastAPI application.
 
 Scaffold scope (WS-P0.1): a single liveness endpoint proving the service runs
-under uv (native dev) and inside its container. Intents/auth/state wiring against
-managed Supabase lands in later workstreams.
+under uv (native dev) and inside its container. Lease, queue and project registry
+wiring lands in later workstreams.
 """
 
 from __future__ import annotations

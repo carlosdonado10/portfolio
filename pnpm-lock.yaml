@@ -8,7 +8,7 @@ importers:
 
   .: {}
 
-  apps/landing:
+  apps/lab:
     dependencies:
       react:
         specifier: ^19.0.0
@@ -32,8 +32,6 @@ importers:
       vite:
         specifier: ^6.0.0
         version: 6.4.3
-
-  packages/design-system: {}
 
   packages/notify-client: {}
 

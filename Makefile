@@ -16,8 +16,8 @@ install: ## Install both toolchains + git hooks (pre-commit, commit-msg)
 	uv sync
 	uv run --frozen pre-commit install --install-hooks
 
-dev-web: ## Run the landing app (Vite dev server)
-	pnpm --filter @portfolio/landing dev
+dev-web: ## Run the lab app (Vite dev server)
+	pnpm --filter @portfolio/lab dev
 
 dev-cp: ## Run the control-plane API (uvicorn, reload)
 	uv run --package control-plane uvicorn control_plane.app:app --reload
@@ -45,5 +45,5 @@ logs: ## Tail platform logs
 	docker compose logs -f
 
 clean: ## Remove build artifacts and virtualenvs (keeps lockfiles)
-	rm -rf .venv apps/landing/dist
+	rm -rf .venv apps/lab/dist
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

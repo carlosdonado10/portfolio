@@ -1,7 +1,7 @@
 """Agent entrypoint — emits a heartbeat until interrupted.
 
 Scaffold scope (WS-P0.1): a liveness loop proving the agent runs under uv (native
-dev) and inside its container. The real work — reading intents from Supabase and
+dev) and inside its container. The real work — polling the control plane and
 bringing the ML app stacks up/down via the bind-mounted Docker socket — lands in
 WS3. This module deliberately depends on the standard library only.
 """

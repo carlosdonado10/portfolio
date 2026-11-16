@@ -2,19 +2,19 @@
 #
 #   docker compose build && docker compose up -d
 #
-# Three platform services: landing, control-plane, agent. The security boundary
+# Three platform services: lab, control-plane, agent. The security boundary
 # is STRUCTURAL — only `agent` mounts the Docker socket; the web-facing services
 # physically have no route to it in this file.
 name: portfolio-platform
 
 services:
-  landing:
+  lab:
     build:
       context: .
-      dockerfile: apps/landing/Dockerfile
-    image: portfolio/landing:dev
+      dockerfile: apps/lab/Dockerfile
+    image: portfolio/lab:dev
     ports:
-      - "${LANDING_PORT:-8080}:80"
+      - "${LAB_PORT:-8080}:80"
     networks: [platform]
     restart: unless-stopped
 
@@ -53,5 +53,4 @@ networks:
 
 # Documented seams — intentionally NOT in this compose:
 #   * reverse proxy + forward-auth (Caddy/Traefik + TLS)  -> WS0.2 (infra/proxy)
-#   * Supabase (Postgres + Auth)                           -> managed, OFF-BOX; env only (.env)
 #   * the five ML apps                                     -> each its own repo, agent-managed, own compose

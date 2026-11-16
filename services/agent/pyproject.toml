@@ -1,14 +1,16 @@
 [project]
 name = "agent"
 version = "0.1.0"
-description = "Portfolio platform privileged host agent (control tier). Stdlib only for now; Docker SDK + ML-app-repo management land in WS3."
+description = "Portfolio platform privileged host agent (control tier). Docker SDK + ML-app-repo management land in WS3."
 requires-python = ">=3.13"
-dependencies = []
-
-[dependency-groups]
-dev = [
-    "pytest>=8",
+dependencies = [
+    "orch-common",
+    "httpx",
+    "pydantic>=2",
 ]
+
+[tool.uv.sources]
+orch-common = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

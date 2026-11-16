@@ -3,6 +3,7 @@
 # shared lockfile (uv.lock) and one shared .venv.
 #
 # Members:
+#   services/common        — orch_common: manifest model, wire schemas, orchctl CLI
 #   services/control-plane — FastAPI web API (control tier)
 #   services/agent         — privileged host agent (control tier)
 #
@@ -10,7 +11,7 @@
 # pnpm workspace — see pnpm-workspace.yaml. Python version is pinned in
 # .python-version and each member's requires-python.
 [tool.uv.workspace]
-members = ["services/control-plane", "services/agent"]
+members = ["services/common", "services/control-plane", "services/agent"]
 
 # Repo-wide quality tooling. The pre-commit hooks run these through `uv run`, so
 # the versions here (pinned in uv.lock) are the single source of truth for local
@@ -60,7 +61,7 @@ ignore = ["E501"]
 python_version = "3.13"
 strict = true
 warn_unreachable = true
-mypy_path = ["services/control-plane/src", "services/agent/src"]
+mypy_path = ["services/common/src", "services/control-plane/src", "services/agent/src"]
 explicit_package_bases = true
 
 # --- pytest + coverage ------------------------------------------------------
@@ -72,7 +73,7 @@ markers = ["integration: needs a real Docker daemon (run with -m integration)"]
 
 [tool.coverage.run]
 branch = true
-source = ["control_plane", "agent"]
+source = ["orch_common", "control_plane", "agent"]
 
 [tool.coverage.report]
 fail_under = 80
