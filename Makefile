@@ -19,8 +19,15 @@ install: ## Install both toolchains + git hooks (pre-commit, commit-msg)
 dev-web: ## Run the lab app (Vite dev server)
 	pnpm --filter @portfolio/lab dev
 
-dev-cp: ## Run the control-plane API (uvicorn, reload)
-	uv run --package control-plane uvicorn control_plane.app:app --reload
+dev-cp: ## Run the control-plane (public :8000, agent :8001)
+	mkdir -p .dev
+	ORCH_COOKIE_SECRET=dev-cookie-secret-not-for-prod \
+	ORCH_OWNER_SECRET=dev-owner-secret-not-for-prod \
+	ORCH_DB_PATH=./.dev/orch.sqlite \
+	ORCH_PROJECTS_DIR=./projects \
+	ORCH_INCLUDE_HIDDEN=1 \
+	ORCH_COOKIE_SECURE=false \
+	uv run --package control-plane python -m control_plane.main
 
 dev-agent: ## Run the agent heartbeat loop
 	uv run --package agent python -m agent

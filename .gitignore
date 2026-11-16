@@ -166,3 +166,6 @@ PortfolioLanding/
 
 # Generated nginx routing (written by the control plane)
 infra/proxy/generated/*.conf
+
+# Local dev state (make dev-cp)
+.dev/

@@ -17,16 +17,8 @@ QueueEntry.last_seen
 from control_plane.engine import Engine  # noqa: E402
 from control_plane.settings import Settings  # noqa: E402
 
-Engine.wait_desired
-Engine.run_ticks
-Engine.load
 Engine.flush
-Settings.db_path
-Settings.projects_dir
 Settings.repos_dir
-Settings.resend_api_key
-Settings.email_from
-Settings.public_base_url
 
 import sqlite3  # noqa: E402
 

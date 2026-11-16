@@ -35,7 +35,7 @@ portfolio/
 │   └── notify-client/     # PLACEHOLDER — @portfolio/notify-client (WS5.4)
 ├── services/
 │   ├── common/            # uv member — orch_common (shared models + orchctl)
-│   ├── control-plane/     # uv member — FastAPI web API (GET /health)
+│   ├── control-plane/     # uv member — FastAPI web API (GET /api/health; agent API :8001)
 │   └── agent/             # uv member — privileged host agent (heartbeat)
 ├── infra/proxy/           # PLACEHOLDER — reverse proxy + forward-auth (WS0.2)
 ├── docs/decisions/        # ADRs (0001–0006)
@@ -67,7 +67,7 @@ portfolio/
 ```bash
 make install      # pnpm install + uv sync
 make dev-web      # lab app            → http://localhost:5173
-make dev-cp       # control-plane API  → http://localhost:8000  (GET /health)
+make dev-cp       # control-plane API  → http://localhost:8000  (GET /api/health; agent API :8001)
 make dev-agent    # agent heartbeat loop
 make test         # Python test suites
 ```
@@ -77,7 +77,7 @@ Equivalent raw commands (no Make):
 ```bash
 pnpm install && uv sync
 pnpm --filter @portfolio/lab dev
-uv run --package control-plane uvicorn control_plane.app:app --reload
+uv run --package control-plane python -m control_plane.main   # needs ORCH_* env, see Makefile dev-cp
 uv run --package agent python -m agent
 ```
 
