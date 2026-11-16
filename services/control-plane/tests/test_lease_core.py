@@ -275,3 +275,22 @@ def test_dataclasses_are_constructible():
     e = QueueEntry("X", "al", "a", False, 0.0, 0.0)
     lease = Lease("X", "al", "a", False, 900.0, None, 0.0, None)
     assert State(lease=lease, queue=(e,)).queue[0] is e
+
+
+def test_duplicate_ready_does_not_extend_window():
+    s, _ = run(State(), StartRequested("A", "a", 0, has_email=True))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 10))
+    s, fx = run(s, ready(s, "a", 800))
+    assert s.lease.window_ends_at == 900
+    assert fx == []
+    s, fx = run(s, Tick(900))
+    assert s.lease.grace_deadline == 1080
+    assert ("A", "grace_started") in kinds(fx)
+
+
+def test_observed_starting_while_ready_is_noop():
+    s, _ = run(State(), StartRequested("A", "a", 0))
+    s, _ = run(s, ready(s, "a", 0))
+    t = decide(s, Observed("a", StackStatus.STARTING, s.generation, 50), CFG)
+    assert t.state == s
+    assert t.effects == ()

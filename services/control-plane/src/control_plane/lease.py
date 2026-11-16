@@ -264,7 +264,9 @@ def _observed(state: State, ev: Observed) -> Transition:
         return Transition(state, ())
     lease = state.lease
     if ev.status == StackStatus.READY:
-        if lease is None or lease.stack_id != ev.stack_id:
+        # Only the STARTING -> READY edge starts the window; repeat reports
+        # (agent restart, health recovery) must not extend it.
+        if lease is None or lease.stack_id != ev.stack_id or state.status != StackStatus.STARTING:
             return Transition(state, ())
         new_lease = replace(
             lease,
