@@ -1,5 +1,7 @@
 """The three Python packages of the uv workspace are importable together."""
 
+import pytest
+
 
 def test_workspace_packages_import() -> None:
     import agent
@@ -12,5 +14,6 @@ def test_workspace_packages_import() -> None:
 def test_orchctl_entrypoint_runs() -> None:
     from orch_common.cli import main
 
-    assert main([]) == 0
-    assert main(["bogus"]) == 2
+    with pytest.raises(SystemExit) as e:
+        main(["bogus"])
+    assert e.value.code == 2
