@@ -83,7 +83,7 @@ exclude_also = ["if __name__ == .__main__.:", "if TYPE_CHECKING:"]
 
 # --- vulture: dead-code detection ------------------------------------------
 [tool.vulture]
-paths = ["services", "services/common/vulture_whitelist.py"]
+paths = ["services", "services/common/vulture_whitelist.py", "services/control-plane/vulture_whitelist.py"]
 # 60 catches unused functions/classes, not just imports (ruff already covers those).
 min_confidence = 60
 # Framework-dispatched callables look unused to static analysis.
