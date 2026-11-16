@@ -73,6 +73,12 @@ async def visitor(app, ip=None):
         yield c
 
 
+def signed_sid(sid):
+    from itsdangerous import URLSafeSerializer
+
+    return URLSafeSerializer("s3cret-s3cret-s3cret", salt="orch-sid").dumps(sid)
+
+
 def sid_of(c):
     from itsdangerous import URLSafeSerializer
 
@@ -295,7 +301,7 @@ async def test_sse_route_headers(env):
         "path": "/api/events",
         "raw_path": b"/api/events",
         "query_string": b"",
-        "headers": [],
+        "headers": [(b"cookie", f"orch_sid={signed_sid('sid-route')}".encode())],
         "client": ("1.2.3.4", 1),
         "server": ("test", 80),
     }
@@ -332,7 +338,7 @@ async def test_admin_requires_secret(env):
         assert r.status_code == 200
         o = await c.get("/api/admin/overview")
     assert o.status_code == 200
-    assert set(o.json()) == {"state", "sessions", "recent_visits"}
+    assert set(o.json()) == {"state", "sessions", "recent_visits", "observed"}
 
 
 async def test_admin_force_stop(env):
@@ -452,3 +458,107 @@ async def test_sse_route_uses_configured_ping_interval(env, monkeypatch):
         r = await v.get("/api/events")
     assert r.status_code == 200
     assert seen["ping_s"] == 1.5
+
+
+# -- final review fixes -------------------------------------------------------
+
+
+async def test_events_without_cookie_400_and_no_cookie_minted(env):
+    async with client(env[0]) as c:
+        r = await c.get("/api/events")
+    assert r.status_code == 400
+    assert "cookie" in r.json()["detail"]
+    assert "set-cookie" not in r.headers
+
+
+async def test_events_with_tampered_cookie_400(env):
+    async with client(env[0]) as c:
+        c.cookies.set("orch_sid", "forged")
+        r = await c.get("/api/events")
+    assert r.status_code == 400
+    assert "set-cookie" not in r.headers
+
+
+async def test_leave_queue_removes_me(env):
+    app, eng, *_ = env
+    async with visitor(app) as a, visitor(app) as b:
+        await a.post("/api/start", json={"stack_id": "a"})
+        await b.post("/api/start", json={"stack_id": "b"})
+        r = await b.post("/api/leave")
+        assert r.status_code == 204
+        body = (await b.get("/api/status")).json()
+    assert body["me"]["role"] == "none"
+    assert eng.state.queue == ()
+    assert eng.state.lease is not None
+
+
+async def test_leave_queue_when_not_queued_is_204_noop(env):
+    app, eng, *_ = env
+    async with visitor(app) as a:
+        await a.post("/api/start", json={"stack_id": "a"})
+        assert (await a.post("/api/leave")).status_code == 204
+    assert eng.state.lease.stack_id == "a"
+
+
+async def test_leave_without_cookie_400(env):
+    async with client(env[0]) as c:
+        assert (await c.post("/api/leave")).status_code == 400
+
+
+async def test_stop_by_non_holder_copy_points_at_leaving(env):
+    app = env[0]
+    async with visitor(app) as a, visitor(app) as b:
+        await a.post("/api/start", json={"stack_id": "a"})
+        r = await b.post("/api/stop")
+    assert r.status_code == 403
+    assert "leave the queue" in r.json()["detail"]
+
+
+async def test_status_exposes_lease_durations(env):
+    async with visitor(env[0]) as c:
+        body = (await c.get("/api/status")).json()
+    assert body["lease"] == {"window_s": 900, "grace_s": 180, "idle_s": 180}
+
+
+async def test_projects_visit_not_logged_for_freshly_minted_sid(env):
+    _, _, store, *_ = env
+    async with client(env[0]) as c:
+        await c.get("/api/projects")  # mints: a cookieless hit (bot) is not a visit
+        await c.post("/api/activity")
+        assert store.list_sessions()[0]["visits"] == []
+        await c.get("/api/projects")
+    assert [v["path"] for v in store.list_sessions()[0]["visits"]] == ["/api/projects"]
+
+
+async def test_admin_cookie_scoped_to_admin_api(env):
+    async with client(env[0]) as c:
+        r = await c.post("/api/admin/login", json={"secret": SECRETS["owner_secret"]})
+    cookie = r.headers["set-cookie"]
+    assert "Path=/api/admin" in cookie
+    assert "Max-Age=43200" in cookie
+
+
+async def test_admin_logout_deletes_scoped_cookie(env):
+    async with client(env[0]) as c:
+        await login(c)
+        r = await c.post("/api/admin/logout")
+        assert r.status_code == 204
+        cookie = r.headers["set-cookie"]
+        assert "orch_admin=" in cookie
+        assert "Path=/api/admin" in cookie
+        assert "Max-Age=0" in cookie
+        assert (await c.get("/api/admin/overview")).status_code == 401
+
+
+async def test_admin_overview_includes_observed_reports(env):
+    app, eng, _, _, clock = env
+    await eng.dispatch(StartRequested("x", "a", clock()))
+    await eng.dispatch(
+        Observed("a", StackStatus.FAILED, eng.state.generation, clock(), "boot exceeded 5 seconds")
+    )
+    async with client(app) as c:
+        await login(c)
+        o = (await c.get("/api/admin/overview")).json()
+    assert o["observed"][0]["status"] == "failed"
+    assert o["observed"][0]["error"] == "boot exceeded 5 seconds"
+    assert o["observed"][0]["stack_id"] == "a"

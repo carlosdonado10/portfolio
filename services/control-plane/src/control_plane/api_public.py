@@ -24,6 +24,7 @@ from control_plane.lease import (
     AdminClearQueue,
     AdminForceStop,
     EmailAttached,
+    LeaveQueue,
     Rejected,
     Seen,
     StartRequested,
@@ -38,10 +39,17 @@ SID_COOKIE = "orch_sid"
 ADMIN_COOKIE = "orch_admin"
 COOKIE_MAX_AGE = 30 * 24 * 3600
 ADMIN_MAX_AGE = 12 * 3600
+# Scoped so the browser never sends the admin cookie to /p/<id>/ project pages.
+ADMIN_PATH = "/api/admin"
 
 NO_COOKIE = (
     "We use one anonymous cookie to hold your place in line. There's no account "
     "and nothing else is tracked. Please enable cookies for this site and reload."
+)
+NO_EVENTS_COOKIE = (
+    "Live updates are tied to your anonymous session cookie, and this request "
+    "didn't carry a valid one. The page gets the cookie on its first request; "
+    "reload it, and if this keeps happening, enable cookies for this site."
 )
 NOT_FOUND = "There's no project with that id, so there is nothing to start."
 RATE_LIMITED = (
@@ -184,12 +192,17 @@ def create_public_app(
         minted = False
         if path.startswith("/internal/") or path == "/api/health":
             pass  # probes and the gate never mint a cookie
+        elif path == "/api/events" and sid is None:
+            # A stream opened under a freshly minted sid races the page's other
+            # first requests for the cookie; subscribe only an established sid.
+            return err(400, NO_EVENTS_COOKIE)
         elif sid is None and request.method == "GET":
             sid = secrets.token_urlsafe(24)
             minted = True
         elif sid is None and request.method == "POST" and not path.startswith("/api/admin/"):
             return err(400, NO_COOKIE)
         request.state.sid = sid
+        request.state.minted = minted
         response = await call_next(request)
         if minted and sid is not None:
             response.set_cookie(
@@ -202,6 +215,8 @@ def create_public_app(
                 path="/",
             )
         return response
+
+    cfg = engine.config
 
     def status_body(state: State, sid: str | None) -> dict[str, Any]:
         lease = state.lease
@@ -224,6 +239,7 @@ def create_public_app(
             "grace_deadline": lease.grace_deadline if lease else None,
             "queue": queue,
             "me": {"role": role, "position": position, "alias": alias},
+            "lease": {"window_s": cfg.window_s, "grace_s": cfg.grace_s, "idle_s": cfg.idle_s},
         }
 
     @app.get("/api/health")
@@ -232,7 +248,8 @@ def create_public_app(
 
     @app.get("/api/projects")
     async def projects(request: Request) -> list[dict[str, Any]]:
-        store.log_visit(request.state.sid, "/api/projects", clock())
+        if not request.state.minted:  # a cookieless hit (bot, prefetch) is not a visit
+            store.log_visit(request.state.sid, "/api/projects", clock())
         return [
             {
                 "id": m.id,
@@ -268,6 +285,11 @@ def create_public_app(
         sid = own_session(request)
         state = await engine.dispatch(StopRequested(sid, clock()))
         return status_body(state, sid)
+
+    @app.post("/api/leave", status_code=204)
+    async def leave(request: Request) -> Response:
+        await engine.dispatch(LeaveQueue(own_session(request), clock()))
+        return Response(status_code=204)
 
     @app.post("/api/activity", status_code=204)
     async def activity(request: Request) -> Response:
@@ -315,11 +337,23 @@ def create_public_app(
         response.set_cookie(
             ADMIN_COOKIE,
             admin_signer.dumps(admin_token),
-            max_age=COOKIE_MAX_AGE,
+            max_age=ADMIN_MAX_AGE,
             httponly=True,
             samesite="lax",
             secure=settings.cookie_secure,
-            path="/",
+            path=ADMIN_PATH,
+        )
+        return response
+
+    @app.post("/api/admin/logout", status_code=204)
+    async def admin_logout() -> Response:
+        response = Response(status_code=204)
+        response.delete_cookie(
+            ADMIN_COOKIE,
+            path=ADMIN_PATH,
+            httponly=True,
+            samesite="lax",
+            secure=settings.cookie_secure,
         )
         return response
 
@@ -354,6 +388,7 @@ def create_public_app(
                     {k: s[k] for k in ("sid", "email", "ip", "created_at")} for s in sessions
                 ],
                 "recent_visits": visits,
+                "observed": engine.recent_observed(),
             }
         )
 

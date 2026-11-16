@@ -106,7 +106,6 @@ async def test_observed_stopped_without_stack(engine):
     assert engine.state.status == StackStatus.STOPPED
 
 
-async def test_manifests_lists_known_ids(engine):
+async def test_agent_api_has_no_manifests_route(engine):
     async with client(engine) as c:
-        r = await c.get("/agent/manifests")
-    assert r.json() == ["a", "b"]
+        assert (await c.get("/agent/manifests")).status_code == 404

@@ -35,8 +35,4 @@ def create_agent_app(
         )
         return Response(status_code=204)
 
-    @app.get("/agent/manifests")
-    async def manifests() -> list[str]:
-        return sorted(engine.manifests)
-
     return app

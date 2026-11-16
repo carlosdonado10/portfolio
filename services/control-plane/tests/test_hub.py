@@ -1,3 +1,6 @@
+import asyncio
+
+import pytest
 from control_plane.hub import Hub
 
 
@@ -31,3 +34,16 @@ async def test_hub_broadcast_and_isolation():
 
 async def test_hub_publish_without_subscribers_is_noop():
     await Hub().publish("ghost", {"type": "x"})
+
+
+async def test_hub_discards_subscriber_even_if_close_raises():
+    hub = Hub()
+    with pytest.raises(RuntimeError):
+        async with hub.subscribe("s1") as it:
+            # A reader still parked in the generator makes aclose() raise.
+            task = asyncio.ensure_future(anext(it))
+            await asyncio.sleep(0)
+    assert not hub.connected("s1")
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

@@ -94,6 +94,10 @@ class Engine:
         return self._state
 
     @property
+    def config(self) -> LeaseConfig:
+        return self._cfg
+
+    @property
     def hub(self) -> Hub:
         return self._hub
 

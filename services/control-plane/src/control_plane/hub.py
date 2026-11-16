@@ -25,12 +25,16 @@ class Hub:
         try:
             yield it
         finally:
-            await it.aclose()
-            subs = self._subs.get(sid)
-            if subs is not None:
-                subs.discard(queue)
-                if not subs:
-                    del self._subs[sid]
+            # Unregister first: if aclose() raises (e.g. a reader is still parked
+            # in the generator), the sid must not stay "connected" forever.
+            try:
+                subs = self._subs.get(sid)
+                if subs is not None:
+                    subs.discard(queue)
+                    if not subs:
+                        del self._subs[sid]
+            finally:
+                await it.aclose()
 
     async def publish(self, sid: str, msg: Message) -> None:
         for queue in tuple(self._subs.get(sid, ())):

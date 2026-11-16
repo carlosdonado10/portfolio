@@ -59,6 +59,19 @@ class _Server(uvicorn.Server):
         yield
 
 
+def make_server(app: FastAPI, port: int) -> _Server:
+    # Bounded graceful shutdown: open SSE streams never finish on their own.
+    config = uvicorn.Config(
+        app,
+        host=HOST,
+        port=port,
+        proxy_headers=False,
+        log_level="info",
+        timeout_graceful_shutdown=5,
+    )
+    return _Server(config)
+
+
 class Runnable(Protocol):
     should_exit: bool
 
@@ -100,20 +113,18 @@ async def run(
 
 async def serve(settings: Settings) -> int:
     public, agent, engine = build(settings)
-
-    def server(app: FastAPI, port: int) -> _Server:
-        config = uvicorn.Config(app, host=HOST, port=port, proxy_headers=False, log_level="info")
-        return _Server(config)
-
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
     try:
         return await run(
-            [server(public, PUBLIC_PORT), server(agent, AGENT_PORT)], engine.run_ticks(), stop
+            [make_server(public, PUBLIC_PORT), make_server(agent, AGENT_PORT)],
+            engine.run_ticks(),
+            stop,
         )
     finally:
+        await engine.flush()  # in-flight emails go out before the store closes
         engine.close()
 
 

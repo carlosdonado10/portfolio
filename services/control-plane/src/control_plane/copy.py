@@ -20,7 +20,7 @@ def _mins(seconds: float) -> str:
 def notification(
     kind: str, stack_name: str, data: dict[str, Any], cfg: LeaseConfig = DEFAULT_CFG
 ) -> dict[str, str]:
-    window, grace = _mins(cfg.window_s), _mins(cfg.grace_s)
+    window, grace, idle = _mins(cfg.window_s), _mins(cfg.grace_s), _mins(cfg.idle_s)
     table = {
         "queue_changed": (
             "The queue changed",
@@ -40,12 +40,15 @@ def notification(
         "stack_ready": (
             f"{stack_name} is ready",
             f"{stack_name} passed its health check. Your {window} turn starts now and "
-            f"is protected: nobody can take the machine while it runs.",
+            f"nobody can take the machine from you while you use it. One exception: if "
+            f"someone is waiting and you stop interacting for about {idle}, your turn "
+            f"hands over early.",
         ),
         "grace_started": (
             f"Handoff in {grace}: {stack_name}",
-            f"Someone is waiting and your turn on {stack_name} is up, so you have a "
-            f"{grace} handoff warning before it stops. One project at a time keeps each "
+            f"Someone is waiting and your turn on {stack_name} is up (or you stopped "
+            f"interacting for about {idle}), so you have a {grace} handoff warning "
+            f"before it stops. One project at a time keeps each "
             f"demo fast on 2 CPUs.",
         ),
         "grace_cancelled": (

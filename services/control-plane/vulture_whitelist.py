@@ -13,11 +13,6 @@ LeaseConfig.presence_s
 Lease.last_activity
 QueueEntry.last_seen
 
-# Consumed by the HTTP/SSE/agent layers (later tasks).
-from control_plane.engine import Engine  # noqa: E402
-
-Engine.flush
-
 import sqlite3  # noqa: E402
 
 sqlite3.Connection.row_factory

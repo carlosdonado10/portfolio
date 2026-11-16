@@ -379,3 +379,12 @@ async def test_engine_records_watchdog_failures(tmp_path):
         "at": 11.0,
         "source": "watchdog",
     }
+
+
+def test_ready_copy_explains_the_idle_rule_not_absolute_protection():
+    cfg = LeaseConfig(idle_s=120)
+    body = copy.notification("stack_ready", "X", {}, cfg)["body"]
+    assert "2 minutes" in body
+    assert "stop interacting" in body
+    assert "nobody can take the machine while it runs" not in body
+    assert "2 minutes" in copy.notification("grace_started", "X", {}, cfg)["body"]

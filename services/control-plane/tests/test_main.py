@@ -3,7 +3,7 @@ import asyncio
 import httpx
 import pytest
 from control_plane.mailer import NullMailer, ResendMailer
-from control_plane.main import build, run
+from control_plane.main import build, make_server, run
 from control_plane.settings import Settings
 
 SECRETS = {"cookie_secret": "c" * 20, "owner_secret": "o" * 20}
@@ -27,7 +27,10 @@ async def test_build_wires_both_apps_over_one_engine(tmp_path):
     assert list(engine.manifests) == ["demo"]
     transport = httpx.ASGITransport(app=agent)
     async with httpx.AsyncClient(transport=transport, base_url="http://a") as c:
-        assert (await c.get("/agent/manifests")).json() == ["demo"]
+        assert (await c.get("/agent/desired", params={"after_generation": -1})).json() == {
+            "active": None,
+            "generation": 0,
+        }
     transport = httpx.ASGITransport(app=public)
     async with httpx.AsyncClient(transport=transport, base_url="http://p") as c:
         assert (await c.get("/api/health")).status_code == 200
@@ -86,3 +89,11 @@ async def test_serve_shutdown_signal_stops_everything_cleanly():
     stop.set()
     assert await asyncio.wait_for(task, 2) == 0
     assert all(s.should_exit for s in servers)
+
+
+def test_server_config_bounds_graceful_shutdown(tmp_path):
+    public, _, engine = build(settings(tmp_path))
+    server = make_server(public, 8000)
+    assert server.config.timeout_graceful_shutdown == 5
+    assert server.config.proxy_headers is False
+    engine.close()
