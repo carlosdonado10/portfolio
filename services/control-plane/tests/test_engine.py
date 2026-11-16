@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 
 import pytest
 from control_plane import copy
@@ -130,7 +131,8 @@ async def test_engine_restart_preserves_state_and_clock(tmp_path):
     before = eng.state
     reborn = Engine.load(Store(db), Hub(), FakeMailer(), MANIFESTS, CFG, Clock(100.0))
     await reborn.dispatch(Tick(100.0))
-    assert reborn.state.lease == before.lease
+    # last_activity is rebased to the reload time; every other field is preserved.
+    assert reborn.state.lease == replace(before.lease, last_activity=100.0)
     assert reborn.state.generation == before.generation
     assert reborn.state.lease.grace_deadline is None
     assert reborn.desired().active == "a"
@@ -299,3 +301,18 @@ def test_copy_uses_configured_durations_and_no_project_names():
         assert s and t
     with pytest.raises(KeyError):
         copy.email("nope", "X", "l")
+
+
+async def test_engine_restart_after_long_outage_keeps_queue_and_holder(tmp_path):
+    db = tmp_path / "o.sqlite"
+    eng = Engine(Store(db), Hub(), FakeMailer(), MANIFESTS, CFG, Clock())
+    await eng.dispatch(StartRequested("s1", "a", 0.0))
+    await eng.dispatch(Observed("a", StackStatus.READY, eng.state.generation, 0.0))
+    await eng.dispatch(StartRequested("s2", "b", 1.0))
+    reborn = Engine.load(Store(db), Hub(), FakeMailer(), MANIFESTS, CFG, Clock(500.0))
+    await reborn.dispatch(Tick(500.0))
+    assert [q.sid for q in reborn.state.queue] == ["s2"]
+    assert reborn.state.lease.sid == "s1"
+    assert reborn.state.lease.grace_deadline is None
+    await reborn.dispatch(Tick(500.0 + CFG.presence_s + 1))
+    assert reborn.state.queue == ()

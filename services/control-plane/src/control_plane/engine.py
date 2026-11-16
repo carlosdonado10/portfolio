@@ -5,6 +5,7 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from orch_common.manifest import Manifest
@@ -64,9 +65,17 @@ class Engine:
         clock: Callable[[], float] = time.time,
         public_base_url: str = "",
     ) -> "Engine":
-        return cls(
-            store, hub, mailer, manifests, cfg, clock, public_base_url, state=store.load_state()
-        )
+        # Visitors could not heartbeat while we were down, so presence/idle
+        # timestamps are stale by the outage length: rebase them to now. The
+        # window and grace clocks keep their wall-clock meaning, untouched.
+        now = clock()
+        state = store.load_state()
+        lease = state.lease
+        if lease is not None:
+            lease = replace(lease, last_activity=now)
+        queue = tuple(replace(q, last_seen=now) for q in state.queue)
+        state = replace(state, lease=lease, queue=queue)
+        return cls(store, hub, mailer, manifests, cfg, clock, public_base_url, state=state)
 
     @property
     def state(self) -> State:
