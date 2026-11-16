@@ -111,6 +111,20 @@ make down
 
 To add a project, see [`docs/adding-a-project.md`](docs/adding-a-project.md).
 
+### Deploying behind TLS
+
+The gateway speaks plain http. On the server, put a TLS front proxy on the host (Caddy or
+the host's nginx) in front of it, and in `.env`:
+
+- `HTTP_BIND=127.0.0.1` so only the front proxy can reach the gateway's port;
+- `ORCH_COOKIE_SECURE=true` (the default), which requires HTTPS: browsers drop `Secure`
+  cookies over plain http;
+- `ORCH_PUBLIC_BASE_URL=https://your.domain` for links in emails.
+
+Then uncomment the `set_real_ip_from` / `real_ip_header` example in
+`infra/proxy/nginx.conf` so rate limits see the visitor's IP rather than the front proxy's.
+Details in [`infra/proxy/README.md`](infra/proxy/README.md#tls-and-the-real-client-ip).
+
 ### Target architecture — `linux/arm64` (Oracle Ampere A1)
 
 All base images are multi-arch (`node:24-slim`, `python:3.13-slim`,
@@ -142,6 +156,7 @@ Architecture decisions are recorded as ADRs in
 - [0003 — Node & Python version pins](docs/decisions/0003-node-and-python-version-pins.md)
 - [0004 — Docker Compose topology & socket isolation](docs/decisions/0004-docker-compose-topology-and-socket-isolation.md)
 - [0005 — Platform repo boundary](docs/decisions/0005-platform-repo-boundary.md)
+- [0006 — Orchestrator: no login, single domain, manifest registry](docs/decisions/0006-orchestrator-no-login-single-domain.md)
 
 ## Changelog
 

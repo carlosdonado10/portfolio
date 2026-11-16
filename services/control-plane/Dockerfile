@@ -22,7 +22,7 @@ COPY services/control-plane services/control-plane
 COPY services/agent services/agent
 
 # Install only the control-plane package's environment (agent code not installed).
-RUN uv sync --frozen --package control-plane
+RUN uv sync --frozen --no-dev --package control-plane
 
 # Non-root runtime user; /data holds the SQLite file (mount a volume here).
 RUN useradd --system --uid 10001 --no-create-home orch \

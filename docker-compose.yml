@@ -17,7 +17,8 @@ services:
       dockerfile: infra/proxy/Dockerfile
     image: portfolio/proxy:dev
     ports:
-      - "${HTTP_PORT:-8080}:80"
+      # HTTP_BIND=127.0.0.1 when a TLS front proxy on the host is the only way in.
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80"
     volumes:
       # Written by `make render` (orchctl render-nginx); reload nginx after a change.
       - "./infra/proxy/generated:/etc/nginx/generated:ro"
@@ -47,6 +48,7 @@ services:
       ORCH_LEASE__GRACE_S: "${ORCH_LEASE__GRACE_S:-180}"
       ORCH_LEASE__IDLE_S: "${ORCH_LEASE__IDLE_S:-180}"
       ORCH_LEASE__PRESENCE_S: "${ORCH_LEASE__PRESENCE_S:-120}"
+      ORCH_LEASE__BOOT_WATCHDOG_S: "${ORCH_LEASE__BOOT_WATCHDOG_S:-900}"
     volumes:
       # Named volume: inherits the image's /data ownership (user orch). A bind
       # mount here would need `chown 10001` on the host directory.

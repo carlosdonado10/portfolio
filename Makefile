@@ -11,7 +11,7 @@
 
 ORCH_PROJECTS_DIR ?= $(CURDIR)/projects
 ORCH_REPOS_DIR ?= $(CURDIR)/.dev/repos
-export ORCH_PROJECTS_DIR ORCH_REPOS_DIR ORCH_INCLUDE_HIDDEN HTTP_PORT
+export ORCH_PROJECTS_DIR ORCH_REPOS_DIR ORCH_INCLUDE_HIDDEN HTTP_PORT HTTP_BIND
 
 .PHONY: help install lint dev-web dev-cp dev-agent test build render prepare up down logs e2e clean
 
@@ -49,6 +49,7 @@ lint: ## Run every pre-commit hook against the whole repo
 	uv run --frozen pre-commit run --all-files
 
 test: ## Run the Python test suites
+	uv run --package orch-common pytest services/common
 	uv run --package control-plane pytest services/control-plane
 	uv run --package agent pytest services/agent
 

@@ -220,17 +220,24 @@ def test_handoff_to_queued_visitor(a: httpx.Client, b: httpx.Client) -> None:
     assert b.get("/p/slow/").status_code == 200
 
 
-def test_boot_timeout_fails_and_releases(a: httpx.Client) -> None:
+def test_boot_timeout_fails_and_releases(a: httpx.Client, admin: httpx.Client) -> None:
     start(a, "broken")
-    seen: set[str] = set()
+    generation = admin.get("/api/admin/overview").json()["state"]["generation"]
 
-    def released_after_failure() -> bool:
+    def released() -> bool:
         s = status(a)
-        seen.add(s["status"])
-        return "failed" in seen and s["active"] is None and s["me"]["role"] == "none"
+        return bool(s["active"] is None and s["me"]["role"] == "none")
 
-    wait_for(released_after_failure, 30, "failure, then the lease released", every=0.2)
-    assert "failed" in seen
+    wait_for(released, 30, "the lease released after the boot timeout", every=0.2)
+    # The transient `failed` status is gone by now; the owner's agent-report log keeps it.
+    reports = admin.get("/api/admin/overview").json()["observed"]
+    failures = [
+        r
+        for r in reports
+        if r["stack_id"] == "broken" and r["status"] == "failed" and r["generation"] == generation
+    ]
+    assert failures, reports
+    assert "boot exceeded" in failures[0]["error"]
 
 
 def test_internal_paths_not_public(a: httpx.Client) -> None:

@@ -25,3 +25,13 @@
 docs
 README.md
 Makefile
+
+# Not needed by any image: manifests are mounted at runtime, and these are
+# local-only workspaces/tooling.
+.dev/
+projects/
+PortfolioLanding/
+.agents/
+.claude/
+.superpowers/
+.idea/

@@ -31,6 +31,6 @@ COPY services/control-plane services/control-plane
 COPY services/agent services/agent
 
 # Install only the agent package's environment.
-RUN uv sync --frozen --package agent
+RUN uv sync --frozen --no-dev --package agent
 
 CMD ["/app/.venv/bin/python", "-m", "agent"]
