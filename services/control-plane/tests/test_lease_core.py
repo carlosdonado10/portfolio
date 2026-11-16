@@ -1,6 +1,7 @@
 import pytest
 from control_plane.aliases import alias_for
 from control_plane.lease import (
+    Activity,
     Broadcast,
     Email,
     Lease,
@@ -78,7 +79,7 @@ def test_holder_same_stack_is_noop():
 
 
 def test_stale_generation_observed_ignored():
-    s, _ = run(State(), StartRequested("A", "a", 0), StartRequested("B", "b", 1))
+    s, _ = run(State(), StartRequested("A", "a", 0), StartRequested("B", "b", 1, has_email=True))
     s, _ = run(s, ready(s, "a", 10), Tick(910), Tick(1090))
     assert s.generation == 2
     s2, fx = run(s, Observed("a", StackStatus.READY, 1, 2000))
@@ -136,7 +137,8 @@ def test_queue_after_expiry_starts_grace_immediately():
 
 def test_queue_before_expiry_grace_at_window_end():
     s, _ = run(State(), StartRequested("A", "a", 0))
-    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 100))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 100, has_email=True))
+    s, _ = run(s, Activity("A", 895))
     s, fx = run(s, Tick(899))
     assert s.lease.grace_deadline is None
     s, fx = run(s, Tick(900))
@@ -146,7 +148,7 @@ def test_queue_before_expiry_grace_at_window_end():
 
 def test_grace_started_only_once():
     s, _ = run(State(), StartRequested("A", "a", 0))
-    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 100), Tick(900))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 100, has_email=True), Tick(900))
     s, fx = run(s, Tick(950))
     assert ("A", "grace_started") not in kinds(fx)
     assert s.lease.grace_deadline == 1080
@@ -163,7 +165,7 @@ def test_protected_window_never_interrupted():
 
 def test_grace_end_evicts_and_promotes_different_stack():
     s, _ = run(State(), StartRequested("A", "a", 0))
-    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 1), Tick(900))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 1, has_email=True), Tick(900))
     gen = s.generation
     s, fx = run(s, Tick(1080))
     assert kinds(fx)[0] == ("A", "evicted")
@@ -187,7 +189,7 @@ def test_tick_before_grace_deadline_does_nothing_more():
 
 def test_promote_same_stack_transfers_without_restart():
     s, _ = run(State(), StartRequested("A", "a", 0))
-    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "a", 1), Tick(900))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "a", 1, has_email=True), Tick(900))
     gen = s.generation
     s, fx = run(s, Tick(1080))
     assert s.lease.sid == "B"
@@ -233,36 +235,8 @@ def test_holder_stop_promotes_next():
     assert SetDesired("b", 2) in fx
 
 
-def test_events_deferred_to_task4_are_noops():
-    from control_plane.lease import (
-        Activity,
-        AdminClearQueue,
-        AdminForceStop,
-        EmailAttached,
-        Seen,
-    )
-
-    s, _ = run(State(), StartRequested("A", "a", 0))
-    for ev in (
-        Activity("A", 1),
-        Seen("A", 1),
-        EmailAttached("A", 1),
-        AdminForceStop(1),
-        AdminClearQueue(1),
-        Observed("a", StackStatus.FAILED, s.generation, 1, error="x"),
-    ):
-        assert decide(s, ev, CFG).state == s
-
-
-def test_holder_switch_request_is_noop_for_now():
-    s, _ = run(State(), StartRequested("A", "a", 0))
-    t = decide(s, StartRequested("A", "b", 1), CFG)
-    assert t.state == s
-    assert t.effects == ()
-
-
 def test_state_json_roundtrip():
-    s, _ = run(State(), StartRequested("A", "a", 0), StartRequested("B", "b", 1))
+    s, _ = run(State(), StartRequested("A", "a", 0), StartRequested("B", "b", 1, has_email=True))
     s, _ = run(s, ready(s, "a", 10), Tick(910))
     assert s.lease.grace_deadline is not None
     assert State.from_json(s.to_json()) == s
@@ -279,7 +253,8 @@ def test_dataclasses_are_constructible():
 
 def test_duplicate_ready_does_not_extend_window():
     s, _ = run(State(), StartRequested("A", "a", 0, has_email=True))
-    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 10))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 10, has_email=True))
+    s, _ = run(s, Activity("A", 790))
     s, fx = run(s, ready(s, "a", 800))
     assert s.lease.window_ends_at == 900
     assert fx == []

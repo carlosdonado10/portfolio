@@ -187,13 +187,19 @@ def decide(state: State, event: Event, cfg: LeaseConfig) -> Transition:
     elif isinstance(event, StopRequested):
         t = _stop_requested(state, event, cfg)
     elif isinstance(event, Observed):
-        t = _observed(state, event)
+        t = _observed(state, event, cfg)
     elif isinstance(event, Tick):
         t = _tick(state, event, cfg)
+    elif isinstance(event, Activity):
+        t = _touch(state, event.sid, event.now, holder_activity=True)
+    elif isinstance(event, Seen):
+        t = _touch(state, event.sid, event.now, holder_activity=False)
+    elif isinstance(event, EmailAttached):
+        t = _email_attached(state, event)
+    elif isinstance(event, AdminForceStop):
+        t = _admin_force_stop(state, event, cfg)
     else:
-        # Activity, Seen, EmailAttached, AdminForceStop, AdminClearQueue:
-        # rules land with the idle/presence/admin work.
-        t = Transition(state, ())
+        t = _admin_clear_queue(state)
     return _evaluate_contention(t, event.now, cfg)
 
 
@@ -221,8 +227,9 @@ def _start_requested(state: State, ev: StartRequested, cfg: LeaseConfig) -> Tran
             ),
         )
     if lease.sid == ev.sid:
-        # Same stack is a no-op; switching projects is handled separately.
-        return Transition(state, ())
+        if lease.stack_id == ev.stack_id:
+            return Transition(state, ())
+        return _switch(state, lease, ev)
     entry = QueueEntry(
         sid=ev.sid,
         alias=alias_for(ev.sid),
@@ -248,6 +255,66 @@ def _start_requested(state: State, ev: StartRequested, cfg: LeaseConfig) -> Tran
     )
 
 
+def _switch(state: State, lease: Lease, ev: StartRequested) -> Transition:
+    if lease.grace_deadline is not None:
+        raise Rejected(
+            409,
+            "Switching projects is disabled during the handoff window because "
+            "someone is waiting for their turn. Your current project keeps "
+            "running until the handoff ends.",
+        )
+    if state.status == StackStatus.READY and lease.window_ends_at is not None:
+        remaining = max(0.0, lease.window_ends_at - ev.now)
+    else:
+        remaining = lease.window_remaining_s
+    generation = state.generation + 1
+    new_lease = replace(
+        lease,
+        stack_id=ev.stack_id,
+        has_email=lease.has_email or ev.has_email,
+        window_remaining_s=remaining,
+        window_ends_at=None,
+        last_activity=ev.now,
+    )
+    # STARTING (not READY) so the new stack's first READY report is applied.
+    return Transition(
+        replace(state, lease=new_lease, status=StackStatus.STARTING, generation=generation),
+        (SetDesired(ev.stack_id, generation), Notify(lease.sid, "stack_starting")),
+    )
+
+
+def _touch(state: State, sid: str, now: float, *, holder_activity: bool) -> Transition:
+    lease = state.lease
+    if holder_activity and lease is not None and lease.sid == sid:
+        return Transition(replace(state, lease=replace(lease, last_activity=now)), ())
+    queue = tuple(replace(q, last_seen=now) if q.sid == sid else q for q in state.queue)
+    return Transition(replace(state, queue=queue), ())
+
+
+def _email_attached(state: State, ev: EmailAttached) -> Transition:
+    lease = state.lease
+    if lease is not None and lease.sid == ev.sid:
+        return Transition(replace(state, lease=replace(lease, has_email=True)), ())
+    queue = tuple(replace(q, has_email=True) if q.sid == ev.sid else q for q in state.queue)
+    return Transition(replace(state, queue=queue), ())
+
+
+def _admin_force_stop(state: State, ev: AdminForceStop, cfg: LeaseConfig) -> Transition:
+    lease = state.lease
+    if lease is None:
+        return Transition(state, ())
+    promoted = _promote(state, ev.now, cfg)
+    return Transition(promoted.state, (Notify(lease.sid, "evicted"), *promoted.effects))
+
+
+def _admin_clear_queue(state: State) -> Transition:
+    if not state.queue:
+        return Transition(state, ())
+    effects: list[Effect] = [Notify(q.sid, "queue_changed") for q in state.queue]
+    effects.append(Broadcast())
+    return Transition(replace(state, queue=()), tuple(effects))
+
+
 def _stop_requested(state: State, ev: StopRequested, cfg: LeaseConfig) -> Transition:
     if state.lease is None or state.lease.sid != ev.sid:
         raise Rejected(
@@ -259,7 +326,7 @@ def _stop_requested(state: State, ev: StopRequested, cfg: LeaseConfig) -> Transi
     return _promote(state, ev.now, cfg)
 
 
-def _observed(state: State, ev: Observed) -> Transition:
+def _observed(state: State, ev: Observed, cfg: LeaseConfig) -> Transition:
     if ev.generation != state.generation:
         return Transition(state, ())
     lease = state.lease
@@ -279,16 +346,45 @@ def _observed(state: State, ev: Observed) -> Transition:
         return Transition(replace(state, lease=new_lease, status=StackStatus.READY), tuple(effects))
     if ev.status == StackStatus.STOPPED and lease is None:
         return Transition(replace(state, status=StackStatus.STOPPED), ())
-    # FAILED handling is added with the failure rules.
+    if ev.status == StackStatus.FAILED and lease is not None and lease.stack_id == ev.stack_id:
+        # A failed stack never transfers: promote takes the restart branch.
+        failed = replace(state, status=StackStatus.FAILED)
+        failure_fx: list[Effect] = [Notify(lease.sid, "stack_failed", {"error": ev.error})]
+        if lease.has_email:
+            failure_fx.append(Email(lease.sid, "stack_failed", lease.stack_id))
+        promoted = _promote(failed, ev.now, cfg)
+        return Transition(promoted.state, (*failure_fx, *promoted.effects))
     return Transition(state, ())
+
+
+def _drop_absent(state: State, now: float, cfg: LeaseConfig) -> Transition:
+    kept = tuple(q for q in state.queue if q.has_email or now - q.last_seen <= cfg.presence_s)
+    if len(kept) == len(state.queue):
+        return Transition(state, ())
+    return Transition(replace(state, queue=kept), (Broadcast(),))
+
+
+def _cancel_grace_if_empty(t: Transition) -> Transition:
+    lease = t.state.lease
+    if lease is None or lease.grace_deadline is None or t.state.queue:
+        return t
+    return Transition(
+        replace(t.state, lease=replace(lease, grace_deadline=None)),
+        (*t.effects, Notify(lease.sid, "grace_cancelled")),
+    )
 
 
 def _tick(state: State, ev: Tick, cfg: LeaseConfig) -> Transition:
-    lease = state.lease
+    # Order matters: drop absent entries, cancel grace if nobody is left, and
+    # only then check the deadline. Never evict for an empty queue.
+    t = _cancel_grace_if_empty(_drop_absent(state, ev.now, cfg))
+    lease = t.state.lease
     if lease is not None and lease.grace_deadline is not None and ev.now >= lease.grace_deadline:
-        promoted = _promote(state, ev.now, cfg)
-        return Transition(promoted.state, (Notify(lease.sid, "evicted"), *promoted.effects))
-    return Transition(state, ())
+        promoted = _promote(t.state, ev.now, cfg)
+        return Transition(
+            promoted.state, (*t.effects, Notify(lease.sid, "evicted"), *promoted.effects)
+        )
+    return t
 
 
 def _promote(state: State, now: float, cfg: LeaseConfig) -> Transition:
@@ -346,6 +442,7 @@ def _promote(state: State, now: float, cfg: LeaseConfig) -> Transition:
 
 
 def _evaluate_contention(t: Transition, now: float, cfg: LeaseConfig) -> Transition:
+    t = _cancel_grace_if_empty(t)
     state, lease = t.state, t.state.lease
     if (
         lease is None
@@ -353,8 +450,11 @@ def _evaluate_contention(t: Transition, now: float, cfg: LeaseConfig) -> Transit
         or state.status != StackStatus.READY
         or lease.grace_deadline is not None
         or lease.window_ends_at is None
-        or now < lease.window_ends_at
     ):
+        return t
+    expired = now >= lease.window_ends_at
+    idle = now - lease.last_activity >= cfg.idle_s
+    if not (expired or idle):
         return t
     deadline = now + cfg.grace_s
     return Transition(
