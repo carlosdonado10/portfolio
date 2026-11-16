@@ -4,7 +4,7 @@
 services:
   web:
     build: .
-    image: orch-example-fastocal
+    image: orch-example-fast:local
     environment:
       PROJECT_ID: fast
       READY_AFTER_S: "2"

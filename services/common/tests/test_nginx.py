@@ -40,11 +40,16 @@ def test_render_contains_location_gate_and_interstitial_per_manifest(tmp_path: P
     assert "proxy_set_header X-Forwarded-Prefix /p/fast;" in out
     assert "include /etc/nginx/snippets/project-proxy.conf;" in out
     assert "location = /_gate/fast {" in out
-    assert "proxy_pass http://control-plane:8000/internal/gate/fast;" in out
+    assert "set $gate_fast http://control-plane:8000/internal/gate/fast;" in out
+    assert "proxy_pass $gate_fast;" in out
+    assert "proxy_pass http://control-plane" not in out  # resolved per request, not at start
+    assert "error_page 500 502 503 504 = @interstitial_fast;" in out
+    assert "proxy_set_header X-Real-IP $remote_addr;" in out
     assert "location @interstitial_fast { return 302 /lab/p/fast; }" in out
     # hyphenated ids: variable name uses underscores, everything else keeps the hyphen
     assert "set $up_slow_two http://slow-two-entry:9000;" in out
     assert "auth_request /_gate/slow-two;" in out
+    assert "set $gate_slow_two http://control-plane:8000/internal/gate/slow-two;" in out
     assert "location @interstitial_slow_two { return 302 /lab/p/slow-two; }" in out
 
 

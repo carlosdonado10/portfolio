@@ -33,4 +33,5 @@ class Settings(BaseSettings):
     resend_api_key: str | None = None
     email_from: str | None = None
     public_base_url: str = ""
+    sse_ping_s: float = 15.0
     lease: LeaseSettings = LeaseSettings()

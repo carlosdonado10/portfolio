@@ -44,9 +44,9 @@ docker compose exec proxy nginx -t         # check the config
 docker compose exec proxy nginx -s reload  # pick up new routes without a restart
 ```
 
-The control-plane gate upstream is resolved when nginx starts, so the proxy waits for the
-control-plane healthcheck in `docker-compose.yml`. If you recreate the control-plane alone,
-run `docker compose restart proxy`.
+The gate upstream is resolved per request, so recreating the control-plane needs no proxy
+restart. If the control-plane is down, `/p/<id>/` degrades to the interstitial (redirect to
+`/lab/p/<id>`).
 
 ## TLS
 

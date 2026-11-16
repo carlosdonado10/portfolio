@@ -37,6 +37,7 @@ MAKE_VARS = {
     "ORCH_LEASE__GRACE_S": str(GRACE_S),
     "ORCH_LEASE__IDLE_S": "3",
     "ORCH_LEASE__PRESENCE_S": "3",
+    "ORCH_SSE_PING_S": "1",
 }
 
 BROKEN_MANIFEST = """\
@@ -117,6 +118,12 @@ def start(client: httpx.Client, stack_id: str) -> None:
 
 @pytest.fixture(scope="module", autouse=True)
 def platform() -> Iterator[None]:
+    if os.environ.get("ORCH_E2E") != "1":
+        pytest.exit(
+            "refusing to run: this test wipes the portfolio-platform_orch-data volume and "
+            "tears down every orch-* stack. Run it with `make e2e` (sets ORCH_E2E=1).",
+            returncode=2,
+        )
     if shutil.which("docker") is None:
         pytest.fail("docker is required for the e2e test")
     TEMP_DIR.joinpath("broken").mkdir(parents=True, exist_ok=True)
@@ -235,35 +242,32 @@ def test_sse_disconnect_releases_subscription(a: httpx.Client, b: httpx.Client) 
     """An open event stream keeps a queue entry present; closing it lets the entry lapse.
 
     B has no email, so presence is all that keeps its entry alive (PRESENCE_S=3). The stream
-    is opened after B queues, so its connect refreshes B's presence; B is still queued after
-    the original 3s would have lapsed. Once the stream is closed through nginx nothing
-    refreshes B any more and the entry must be dropped. A is kept active and was queued
-    against before ready, so the drop lands well before window + grace could hand off.
+    pings every second (SSE_PING_S=1), each ping refreshing presence. A boots `slow` (20s, no
+    protected window until ready) and stays active, so nothing can hand off while B waits.
+    With the stream open B must outlive three presence periods; after it closes, B must lapse
+    within presence + about 2s.
     """
-
-    def busy_for(seconds: float) -> None:
-        end = time.monotonic() + seconds
-        while time.monotonic() < end:
-            a.post("/api/activity")
-            time.sleep(0.4)
-
-    start(a, "fast")
-    start(b, "slow")
+    presence_s = int(MAKE_VARS["ORCH_LEASE__PRESENCE_S"])
+    start(a, "slow")
+    status(b)
+    start(b, "fast")
     assert status(b)["me"]["role"] == "queued"
-    busy_for(1.5)
+
     with b.stream("GET", "/api/events", timeout=httpx.Timeout(10, read=None)) as stream:
         assert stream.status_code == 200
         assert stream.headers["content-type"].startswith("text/event-stream")
-        busy_for(2.5)  # past the original presence deadline
-        assert status(b)["me"]["role"] == "queued", "the open stream should keep B present"
-    # Stream closed. Reading /api/status does not count as presence.
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
+        end = time.monotonic() + 3 * presence_s + 1
+        while time.monotonic() < end:
+            a.post("/api/activity")
+            assert status(b)["me"]["role"] == "queued", "the open stream should keep B present"
+            time.sleep(0.5)
+    closed_at = time.monotonic()
+
+    def dropped() -> bool:
         a.post("/api/activity")
         s = status(b)
-        if s["me"]["role"] == "none" and not s["queue"]:
-            break
-        time.sleep(0.4)
-    else:
-        raise AssertionError("queue entry was not dropped after the event stream closed")
+        return bool(s["me"]["role"] == "none" and not s["queue"])
+
+    wait_for(dropped, presence_s + 3, "B's entry to lapse after the stream closed", every=0.3)
+    assert time.monotonic() - closed_at <= presence_s + 3
     assert status(a)["me"]["role"] == "holder"

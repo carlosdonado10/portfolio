@@ -435,3 +435,20 @@ async def test_sid_cookie_value_not_accepted_as_admin(env):
     async with visitor(env[0]) as c:
         c.cookies.set("orch_admin", c.cookies["orch_sid"])
         assert (await c.get("/api/admin/overview")).status_code == 401
+
+
+async def test_sse_route_uses_configured_ping_interval(env, monkeypatch):
+    _, eng, store, _, clock = env
+    seen = {}
+
+    async def fake_events(*args, **kwargs):
+        seen.update(kwargs)
+        yield ": ping\n\n"
+
+    monkeypatch.setattr("control_plane.api_public.sse_events", fake_events)
+    settings = Settings(cookie_secure=False, sse_ping_s=1.5, **SECRETS)
+    app = create_public_app(eng, store, settings, MANIFESTS, clock)
+    async with visitor(app) as v:
+        r = await v.get("/api/events")
+    assert r.status_code == 200
+    assert seen["ping_s"] == 1.5

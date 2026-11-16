@@ -3,8 +3,8 @@
 # orch-stacks with alias <id>-entry, no published host ports.
 services:
   web:
-    build: .
-    image: orch-example-slowocal
+    build: ../fast
+    image: orch-example-slow:local
     environment:
       PROJECT_ID: slow
       READY_AFTER_S: "20"

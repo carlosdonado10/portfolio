@@ -15,6 +15,7 @@ _BLOCK = """\
 location /p/{id}/ {{
     auth_request /_gate/{id};
     error_page 401 = @interstitial_{var};
+    error_page 500 502 503 504 = @interstitial_{var};
     set $up_{var} http://{id}-entry:{port};
     proxy_pass $up_{var};
     proxy_set_header X-Forwarded-Prefix /p/{id};
@@ -22,7 +23,9 @@ location /p/{id}/ {{
 }}
 location = /_gate/{id} {{
     internal;
-    proxy_pass http://control-plane:8000/internal/gate/{id};
+    set $gate_{var} http://control-plane:8000/internal/gate/{id};
+    proxy_pass $gate_{var};
+    proxy_set_header X-Real-IP $remote_addr;
     proxy_pass_request_body off;
     proxy_set_header Content-Length "";
     proxy_set_header Cookie $http_cookie;

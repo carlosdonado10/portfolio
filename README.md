@@ -37,11 +37,13 @@ portfolio/
 │   ├── common/            # uv member: orch_common (manifest model, wire schemas, orchctl)
 │   ├── control-plane/     # uv member: FastAPI API, lease/queue engine (agent API :8001)
 │   └── agent/             # uv member: privileged host agent (reconciler)
+├── .github/               # CI workflow and PR template
 ├── infra/proxy/           # nginx gateway image, config, snippets, generated routes
 ├── projects/              # project manifests (stack.toml); _examples/ = fast + slow demos
 ├── tests/integration/     # end-to-end test against the real compose stack (make e2e)
 ├── docs/
 │   ├── decisions/         # ADRs
+│   ├── superpowers/       # design specs and implementation plans
 │   └── adding-a-project.md  # onboarding checklist for a new project
 ├── docker-compose.yml     # proxy + control-plane + agent; only agent gets the Docker socket
 ├── Makefile               # unified install / dev / render / prepare / up / down / e2e
@@ -103,7 +105,9 @@ make down
   `docker compose up -d --build`. Only the nginx proxy publishes a port (`HTTP_PORT`,
   default 8080).
 - `make e2e` brings the stack up with short lease timings and runs the integration tests
-  (needs Docker; tears everything down afterwards).
+  (needs Docker). It is **destructive**: it wipes the `portfolio-platform_orch-data` volume
+  and tears down every `orch-*` stack, so it refuses to run unless `ORCH_E2E=1`, which
+  `make e2e` sets. Never run it on a box with real state.
 
 To add a project, see [`docs/adding-a-project.md`](docs/adding-a-project.md).
 

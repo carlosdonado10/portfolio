@@ -15,6 +15,14 @@ def test_settings_reads_nested_lease_env(monkeypatch):
     assert settings.public_base_url == ""
 
 
+def test_sse_ping_defaults_and_reads_env(monkeypatch):
+    monkeypatch.setenv("ORCH_COOKIE_SECRET", "c" * 16)
+    monkeypatch.setenv("ORCH_OWNER_SECRET", "o" * 16)
+    assert Settings().sse_ping_s == 15.0
+    monkeypatch.setenv("ORCH_SSE_PING_S", "1")
+    assert Settings().sse_ping_s == 1.0
+
+
 def test_rejects_short_secrets(monkeypatch):
     monkeypatch.setenv("ORCH_COOKIE_SECRET", "c" * 16)
     monkeypatch.setenv("ORCH_OWNER_SECRET", "short")

@@ -284,7 +284,7 @@ def create_public_app(
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:
         return StreamingResponse(
-            sse_events(engine, engine.hub, request.state.sid, clock),
+            sse_events(engine, engine.hub, request.state.sid, clock, ping_s=settings.sse_ping_s),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

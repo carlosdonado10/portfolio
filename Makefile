@@ -74,8 +74,8 @@ down: ## Stop the platform and any running project stacks
 logs: ## Tail platform logs
 	docker compose logs -f
 
-e2e: ## End-to-end test: brings the real stack up with the example projects
-	uv run --frozen pytest -m integration tests/integration -v
+e2e: ## End-to-end test (DESTRUCTIVE: wipes the orch-data volume and orch-* stacks)
+	ORCH_E2E=1 uv run --frozen pytest -m integration tests/integration -v
 
 clean: ## Remove build artifacts and virtualenvs (keeps lockfiles)
 	rm -rf .venv apps/lab/dist

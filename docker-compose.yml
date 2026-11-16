@@ -42,6 +42,7 @@ services:
       ORCH_PUBLIC_BASE_URL: "${ORCH_PUBLIC_BASE_URL:-}"
       ORCH_RESEND_API_KEY: "${ORCH_RESEND_API_KEY:-}"
       ORCH_EMAIL_FROM: "${ORCH_EMAIL_FROM:-}"
+      ORCH_SSE_PING_S: "${ORCH_SSE_PING_S:-15}"
       ORCH_LEASE__WINDOW_S: "${ORCH_LEASE__WINDOW_S:-900}"
       ORCH_LEASE__GRACE_S: "${ORCH_LEASE__GRACE_S:-180}"
       ORCH_LEASE__IDLE_S: "${ORCH_LEASE__IDLE_S:-180}"
@@ -61,7 +62,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
-    networks: [orch-internal]
+    # orch-egress: plain bridge so mailer.py can reach the email API. Only the
+    # control-plane is on it; it is never on orch-stacks.
+    networks: [orch-internal, orch-egress]
     restart: unless-stopped
     # NO socket mount, NO host ports.
 
@@ -90,6 +93,9 @@ networks:
   # Control-plane <-> agent <-> proxy. No route to the outside world.
   orch-internal:
     internal: true
+  # Outbound-only path for the control-plane (email). No other member.
+  orch-egress:
+    driver: bridge
   # Shared with project stacks; created by `make up` (docker network create).
   orch-stacks:
     external: true
