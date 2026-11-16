@@ -6,7 +6,7 @@ service layer persists ``State`` and executes the returned effects.
 
 import json
 from dataclasses import asdict, dataclass, field, replace
-from typing import Any
+from typing import Any, assert_never
 
 from orch_common.wire import StackStatus
 
@@ -19,6 +19,9 @@ class LeaseConfig:
     grace_s: float = 180
     idle_s: float = 180
     presence_s: float = 120
+    # A lease stuck in STARTING this long without a READY/FAILED report is
+    # failed by the control plane itself (agent crashed, report lost).
+    boot_watchdog_s: float = 900
 
 
 @dataclass(frozen=True)
@@ -33,6 +36,9 @@ class Lease:
     window_ends_at: float | None
     last_activity: float
     grace_deadline: float | None
+    # When the status last became STARTING (start, switch, promote with boot).
+    # None for snapshots written before the boot watchdog existed.
+    starting_since: float | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +90,12 @@ class StopRequested:
 
 
 @dataclass(frozen=True)
+class LeaveQueue:
+    sid: str
+    now: float
+
+
+@dataclass(frozen=True)
 class Observed:
     stack_id: str
     status: StackStatus
@@ -130,6 +142,7 @@ class AdminClearQueue:
 Event = (
     StartRequested
     | StopRequested
+    | LeaveQueue
     | Observed
     | Activity
     | Seen
@@ -186,6 +199,8 @@ def decide(state: State, event: Event, cfg: LeaseConfig) -> Transition:
         t = _start_requested(state, event, cfg)
     elif isinstance(event, StopRequested):
         t = _stop_requested(state, event, cfg)
+    elif isinstance(event, LeaveQueue):
+        t = _leave_queue(state, event)
     elif isinstance(event, Observed):
         t = _observed(state, event, cfg)
     elif isinstance(event, Tick):
@@ -198,8 +213,10 @@ def decide(state: State, event: Event, cfg: LeaseConfig) -> Transition:
         t = _email_attached(state, event)
     elif isinstance(event, AdminForceStop):
         t = _admin_force_stop(state, event, cfg)
-    else:
+    elif isinstance(event, AdminClearQueue):
         t = _admin_clear_queue(state)
+    else:
+        assert_never(event)
     return _evaluate_contention(t, event.now, cfg)
 
 
@@ -216,6 +233,7 @@ def _start_requested(state: State, ev: StartRequested, cfg: LeaseConfig) -> Tran
             window_ends_at=None,
             last_activity=ev.now,
             grace_deadline=None,
+            starting_since=ev.now,
         )
         new = replace(state, lease=new_lease, status=StackStatus.STARTING, generation=generation)
         return Transition(
@@ -275,6 +293,7 @@ def _switch(state: State, lease: Lease, ev: StartRequested) -> Transition:
         window_remaining_s=remaining,
         window_ends_at=None,
         last_activity=ev.now,
+        starting_since=ev.now,
     )
     # STARTING (not READY) so the new stack's first READY report is applied.
     return Transition(
@@ -315,13 +334,21 @@ def _admin_clear_queue(state: State) -> Transition:
     return Transition(replace(state, queue=()), tuple(effects))
 
 
+def _leave_queue(state: State, ev: LeaveQueue) -> Transition:
+    queue = tuple(q for q in state.queue if q.sid != ev.sid)
+    if len(queue) == len(state.queue):
+        return Transition(state, ())
+    # Grace is cancelled by the contention pass if nobody is left waiting.
+    return Transition(replace(state, queue=queue), (Notify(ev.sid, "queue_changed"), Broadcast()))
+
+
 def _stop_requested(state: State, ev: StopRequested, cfg: LeaseConfig) -> Transition:
     if state.lease is None or state.lease.sid != ev.sid:
         raise Rejected(
             403,
-            "Only the visitor whose turn it is can stop the project, because "
-            "stopping it ends their protected session. Everyone else can "
-            "join the queue instead.",
+            "Only the visitor whose turn it is can stop the project, and right "
+            "now that isn't you, so there is nothing for you to stop. If you are "
+            "waiting in line, leave the queue instead.",
         )
     return _promote(state, ev.now, cfg)
 
@@ -347,14 +374,20 @@ def _observed(state: State, ev: Observed, cfg: LeaseConfig) -> Transition:
     if ev.status == StackStatus.STOPPED and lease is None:
         return Transition(replace(state, status=StackStatus.STOPPED), ())
     if ev.status == StackStatus.FAILED and lease is not None and lease.stack_id == ev.stack_id:
-        # A failed stack never transfers: promote takes the restart branch.
-        failed = replace(state, status=StackStatus.FAILED)
-        failure_fx: list[Effect] = [Notify(lease.sid, "stack_failed", {"error": ev.error})]
-        if lease.has_email:
-            failure_fx.append(Email(lease.sid, "stack_failed", lease.stack_id))
-        promoted = _promote(failed, ev.now, cfg)
-        return Transition(promoted.state, (*failure_fx, *promoted.effects))
+        return _fail(state, lease, ev.now, ev.error, cfg)
     return Transition(state, ())
+
+
+def _fail(
+    state: State, lease: Lease, now: float, error: str | None, cfg: LeaseConfig
+) -> Transition:
+    # A failed stack never transfers: promote takes the restart branch.
+    failed = replace(state, status=StackStatus.FAILED)
+    failure_fx: list[Effect] = [Notify(lease.sid, "stack_failed", {"error": error})]
+    if lease.has_email:
+        failure_fx.append(Email(lease.sid, "stack_failed", lease.stack_id))
+    promoted = _promote(failed, now, cfg)
+    return Transition(promoted.state, (*failure_fx, *promoted.effects))
 
 
 def _drop_absent(state: State, now: float, cfg: LeaseConfig) -> Transition:
@@ -379,6 +412,17 @@ def _tick(state: State, ev: Tick, cfg: LeaseConfig) -> Transition:
     # only then check the deadline. Never evict for an empty queue.
     t = _cancel_grace_if_empty(_drop_absent(state, ev.now, cfg))
     lease = t.state.lease
+    if (
+        lease is not None
+        and t.state.status == StackStatus.STARTING
+        and lease.starting_since is not None
+        and ev.now - lease.starting_since > cfg.boot_watchdog_s
+    ):
+        # The agent never reported READY or FAILED for this generation: fail it
+        # here so a lost report can't hold the box forever (spec §4).
+        error = f"no ready report from the agent in {cfg.boot_watchdog_s:g} s"
+        failed = _fail(t.state, lease, ev.now, error, cfg)
+        return Transition(failed.state, (*t.effects, *failed.effects))
     if lease is not None and lease.grace_deadline is not None and ev.now >= lease.grace_deadline:
         promoted = _promote(t.state, ev.now, cfg)
         return Transition(
@@ -410,16 +454,14 @@ def _promote(state: State, now: float, cfg: LeaseConfig) -> Transition:
         window_ends_at=now + cfg.window_s if same_stack_ready else None,
         last_activity=now,
         grace_deadline=None,
+        starting_since=None if same_stack_ready else now,
     )
     if same_stack_ready:
-        return Transition(
-            replace(state, lease=lease, queue=rest),
-            (
-                Notify(head.sid, "your_turn"),
-                Notify(head.sid, "stack_ready"),
-                Broadcast(),
-            ),
-        )
+        ready_fx: list[Effect] = [Notify(head.sid, "your_turn"), Notify(head.sid, "stack_ready")]
+        if head.has_email:
+            ready_fx.append(Email(head.sid, "stack_ready", head.stack_id))
+        ready_fx.append(Broadcast())
+        return Transition(replace(state, lease=lease, queue=rest), tuple(ready_fx))
     generation = state.generation + 1
     effects: list[Effect] = [
         SetDesired(head.stack_id, generation),

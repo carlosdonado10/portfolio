@@ -15,10 +15,8 @@ QueueEntry.last_seen
 
 # Consumed by the HTTP/SSE/agent layers (later tasks).
 from control_plane.engine import Engine  # noqa: E402
-from control_plane.settings import Settings  # noqa: E402
 
 Engine.flush
-Settings.repos_dir
 
 import sqlite3  # noqa: E402
 

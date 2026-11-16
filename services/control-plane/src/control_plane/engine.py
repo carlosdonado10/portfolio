@@ -4,12 +4,13 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 
 from orch_common.manifest import Manifest
-from orch_common.wire import DesiredState
+from orch_common.wire import DesiredState, StackStatus
 
 from control_plane import copy
 from control_plane.hub import Hub
@@ -19,6 +20,7 @@ from control_plane.lease import (
     Event,
     LeaseConfig,
     Notify,
+    Observed,
     SetDesired,
     State,
     Tick,
@@ -28,6 +30,9 @@ from control_plane.mailer import Mailer
 from control_plane.store import Store
 
 log = logging.getLogger(__name__)
+
+# Owner admin shows the agent's latest reports; in memory only (spec §6).
+OBSERVED_HISTORY = 20
 
 
 class Engine:
@@ -53,6 +58,7 @@ class Engine:
         self._lock = asyncio.Lock()
         self._desired_changed = asyncio.Condition()
         self._mail_tasks: set[asyncio.Task[None]] = set()
+        self._observed: deque[dict[str, Any]] = deque(maxlen=OBSERVED_HISTORY)
 
     @classmethod
     def load(
@@ -73,6 +79,9 @@ class Engine:
         lease = state.lease
         if lease is not None:
             lease = replace(lease, last_activity=now)
+            if lease.starting_since is None and state.status == StackStatus.STARTING:
+                # Snapshot from before the boot watchdog: start its clock now.
+                lease = replace(lease, starting_since=now)
         queue = tuple(replace(q, last_seen=now) for q in state.queue)
         state = replace(state, lease=lease, queue=queue)
         return cls(store, hub, mailer, manifests, cfg, clock, public_base_url, state=state)
@@ -104,11 +113,43 @@ class Engine:
             transition = decide(old, event, self._cfg)  # Rejected propagates untouched
             self._store.save_state(transition.state)
             self._state = transition.state
+            self._record(event, old, transition.effects)
             # Still under the lock so effects from successive events stay ordered;
             # every effect here is non-blocking (queue puts, scheduled mail).
             for effect in transition.effects:
                 await self._execute(effect, old, transition.state)
             return transition.state
+
+    def recent_observed(self) -> list[dict[str, Any]]:
+        """Latest agent (and watchdog) reports, newest first."""
+        return list(reversed(self._observed))
+
+    def _record(self, event: Event, old: State, effects: tuple[Any, ...]) -> None:
+        if isinstance(event, Observed):
+            self._observed.append(
+                {
+                    "generation": event.generation,
+                    "stack_id": event.stack_id or None,
+                    "status": event.status.value,
+                    "error": event.error,
+                    "at": event.now,
+                    "source": "agent",
+                }
+            )
+        elif isinstance(event, Tick) and old.lease is not None:
+            # On a tick, stack_failed can only come from the boot watchdog.
+            for effect in effects:
+                if isinstance(effect, Notify) and effect.kind == "stack_failed":
+                    self._observed.append(
+                        {
+                            "generation": old.generation,
+                            "stack_id": old.lease.stack_id,
+                            "status": StackStatus.FAILED.value,
+                            "error": effect.data.get("error"),
+                            "at": event.now,
+                            "source": "watchdog",
+                        }
+                    )
 
     async def flush(self) -> None:
         """Wait for in-flight emails (tests, graceful shutdown)."""

@@ -316,3 +316,66 @@ async def test_engine_restart_after_long_outage_keeps_queue_and_holder(tmp_path)
     assert reborn.state.lease.grace_deadline is None
     await reborn.dispatch(Tick(500.0 + CFG.presence_s + 1))
     assert reborn.state.queue == ()
+
+
+async def test_engine_load_backfills_starting_since_for_old_snapshots(tmp_path):
+    db = tmp_path / "o.sqlite"
+    eng = Engine(Store(db), Hub(), FakeMailer(), MANIFESTS, CFG, Clock())
+    await eng.dispatch(StartRequested("s1", "a", 0.0))
+    # Simulate a snapshot written before the watchdog field existed.
+    Store(db).save_state(replace(eng.state, lease=replace(eng.state.lease, starting_since=None)))
+    reborn = Engine.load(Store(db), Hub(), FakeMailer(), MANIFESTS, CFG, Clock(50.0))
+    assert reborn.state.lease.starting_since == 50.0
+
+
+async def test_engine_load_keeps_starting_since_wall_clock(tmp_path):
+    db = tmp_path / "o.sqlite"
+    eng = Engine(Store(db), Hub(), FakeMailer(), MANIFESTS, CFG, Clock())
+    await eng.dispatch(StartRequested("s1", "a", 3.0))
+    reborn = Engine.load(Store(db), Hub(), FakeMailer(), MANIFESTS, CFG, Clock(50.0))
+    assert reborn.state.lease.starting_since == 3.0
+
+
+async def test_engine_records_recent_observed_reports(parts):
+    eng, *_ = parts
+    await eng.dispatch(StartRequested("s1", "a", 0.0))
+    gen = eng.state.generation
+    await eng.dispatch(Observed("a", StackStatus.STARTING, gen, 1.0))
+    await eng.dispatch(Observed("a", StackStatus.FAILED, gen, 2.0, "boot exceeded 5 seconds"))
+    reports = eng.recent_observed()
+    assert reports[0] == {
+        "generation": gen,
+        "stack_id": "a",
+        "status": "failed",
+        "error": "boot exceeded 5 seconds",
+        "at": 2.0,
+        "source": "agent",
+    }
+    assert reports[1]["status"] == "starting"
+
+
+async def test_engine_observed_ring_keeps_last_twenty(parts):
+    eng, *_ = parts
+    for i in range(25):
+        await eng.dispatch(Observed("a", StackStatus.STOPPED, 99, float(i)))
+    reports = eng.recent_observed()
+    assert len(reports) == 20
+    assert reports[0]["at"] == 24.0
+    assert reports[-1]["at"] == 5.0
+
+
+async def test_engine_records_watchdog_failures(tmp_path):
+    cfg = LeaseConfig(boot_watchdog_s=10)
+    eng = Engine(Store(tmp_path / "o.sqlite"), Hub(), FakeMailer(), MANIFESTS, cfg, Clock())
+    await eng.dispatch(StartRequested("s1", "a", 0.0))
+    gen = eng.state.generation
+    await eng.dispatch(Tick(11.0))
+    [report] = eng.recent_observed()
+    assert report == {
+        "generation": gen,
+        "stack_id": "a",
+        "status": "failed",
+        "error": "no ready report from the agent in 10 s",
+        "at": 11.0,
+        "source": "watchdog",
+    }

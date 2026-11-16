@@ -32,3 +32,15 @@ def test_rejects_short_secrets(monkeypatch):
     monkeypatch.setenv("ORCH_COOKIE_SECRET", "")
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_boot_watchdog_defaults_and_reads_env(monkeypatch):
+    monkeypatch.setenv("ORCH_COOKIE_SECRET", "c" * 16)
+    monkeypatch.setenv("ORCH_OWNER_SECRET", "o" * 16)
+    assert Settings().lease.to_config().boot_watchdog_s == 900
+    monkeypatch.setenv("ORCH_LEASE__BOOT_WATCHDOG_S", "60")
+    assert Settings().lease.to_config().boot_watchdog_s == 60
+
+
+def test_repos_dir_is_not_a_control_plane_setting():
+    assert "repos_dir" not in Settings.model_fields

@@ -1,3 +1,6 @@
+import json
+from dataclasses import replace
+
 import pytest
 from control_plane.lease import (
     Activity,
@@ -7,6 +10,7 @@ from control_plane.lease import (
     Email,
     EmailAttached,
     LeaseConfig,
+    LeaveQueue,
     Notify,
     Observed,
     Rejected,
@@ -239,3 +243,115 @@ def test_admin_clear_queue_empty_is_noop():
     t = decide(s, AdminClearQueue(1), CFG)
     assert t.state == s
     assert t.effects == ()
+
+
+# -- leave the queue (I1) ----------------------------------------------------
+
+
+def test_leave_queue_removes_entry_and_notifies():
+    s, _ = run(State(), StartRequested("A", "a", 0), StartRequested("B", "b", 1))
+    s, fx = run(s, LeaveQueue("B", 2))
+    assert s.queue == ()
+    assert ("B", "queue_changed") in kinds(fx)
+    assert Broadcast() in fx
+    assert s.lease.sid == "A"
+
+
+def test_leave_queue_when_not_queued_is_noop():
+    s, _ = run(State(), StartRequested("A", "a", 0))
+    t = decide(s, LeaveQueue("Z", 2), CFG)
+    assert t.state == s
+    assert t.effects == ()
+    # The holder is not queued either: leaving never stops their stack.
+    t = decide(s, LeaveQueue("A", 2), CFG)
+    assert t.state == s
+    assert t.effects == ()
+
+
+def test_leave_queue_cancels_grace_when_last_waiter_leaves():
+    s, _ = run(State(), StartRequested("A", "a", 0))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 1, has_email=True), Tick(900))
+    assert s.lease.grace_deadline is not None
+    s, fx = run(s, LeaveQueue("B", 901))
+    assert s.lease.grace_deadline is None
+    assert ("A", "grace_cancelled") in kinds(fx)
+
+
+# -- same-stack promote emails stack_ready (I2) ------------------------------
+
+
+def test_same_stack_promote_emails_stack_ready_to_emailed_head():
+    s, _ = run(State(), StartRequested("A", "a", 0))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "a", 1, has_email=True), Tick(900))
+    s, fx = run(s, Tick(1080))
+    assert Email("B", "stack_ready", "a") in fx
+
+
+def test_same_stack_promote_without_email_sends_none():
+    s, _ = run(State(), StartRequested("A", "a", 0))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "a", 1), Tick(900))
+    s, fx = run(s, Tick(1080))
+    assert [e for e in fx if isinstance(e, Email)] == []
+
+
+# -- boot watchdog (I4b) -----------------------------------------------------
+
+WATCHDOG = LeaseConfig(boot_watchdog_s=100)
+
+
+def test_starting_since_set_on_start_switch_and_promote():
+    s, _ = run(State(), StartRequested("A", "a", 5))
+    assert s.lease.starting_since == 5
+    s, _ = run(s, ready(s, "a", 6), StartRequested("A", "b", 7))
+    assert s.lease.starting_since == 7
+    s, _ = run(s, StartRequested("B", "c", 8, has_email=True), ready(s, "b", 9), Tick(9 + 900))
+    s, _ = run(s, Tick(9 + 900 + 180))
+    assert s.lease.sid == "B"
+    assert s.status == StackStatus.STARTING
+    assert s.lease.starting_since == 9 + 900 + 180
+
+
+def test_watchdog_fails_stuck_boot_and_promotes():
+    s = decide(State(), StartRequested("A", "a", 0, has_email=True), WATCHDOG).state
+    s = decide(s, StartRequested("B", "b", 1), WATCHDOG).state
+    t = decide(s, Tick(100), WATCHDOG)
+    assert t.state.lease.sid == "A"  # not yet: strictly more than the limit
+    t = decide(s, Tick(101), WATCHDOG)
+    assert t.state.lease.sid == "B"
+    assert t.state.status == StackStatus.STARTING
+    failed = [e for e in t.effects if isinstance(e, Notify) and e.kind == "stack_failed"]
+    assert failed == [
+        Notify("A", "stack_failed", {"error": "no ready report from the agent in 100 s"})
+    ]
+    assert Email("A", "stack_failed", "a") in t.effects
+    assert SetDesired("b", t.state.generation) in t.effects
+
+
+def test_watchdog_releases_when_nobody_waits():
+    s = decide(State(), StartRequested("A", "a", 0), WATCHDOG).state
+    t = decide(s, Tick(200), WATCHDOG)
+    assert t.state.lease is None
+    assert SetDesired(None, t.state.generation) in t.effects
+
+
+def test_watchdog_ignores_ready_stacks():
+    s = decide(State(), StartRequested("A", "a", 0), WATCHDOG).state
+    s = decide(s, ready(s, "a", 50), WATCHDOG).state
+    t = decide(s, Tick(10_000), WATCHDOG)
+    assert t.state.lease.sid == "A"
+    assert t.state.status == StackStatus.READY
+
+
+def test_watchdog_skips_lease_without_starting_since():
+    s = decide(State(), StartRequested("A", "a", 0), WATCHDOG).state
+    s = State(lease=replace(s.lease, starting_since=None), status=s.status, generation=1)
+    assert decide(s, Tick(10_000), WATCHDOG).state == s
+
+
+def test_old_snapshot_without_starting_since_loads():
+    s, _ = run(State(), StartRequested("A", "a", 0))
+    data = json.loads(s.to_json())
+    del data["lease"]["starting_since"]
+    loaded = State.from_json(json.dumps(data))
+    assert loaded.lease.starting_since is None
+    assert loaded.lease.sid == "A"

@@ -15,6 +15,7 @@ class LeaseSettings(BaseModel):
     grace_s: float = 180
     idle_s: float = 180
     presence_s: float = 120
+    boot_watchdog_s: float = 900
 
     def to_config(self) -> LeaseConfig:
         return LeaseConfig(**self.model_dump())
@@ -25,7 +26,6 @@ class Settings(BaseSettings):
 
     db_path: Path = Path("/data/orch.sqlite")
     projects_dir: Path = Path("/srv/orch/projects")
-    repos_dir: Path = Path("/srv/orch/repos")
     include_hidden: bool = False
     cookie_secret: str = Field(min_length=MIN_SECRET_LEN)
     cookie_secure: bool = True
