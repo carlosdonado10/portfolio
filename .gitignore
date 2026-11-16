@@ -153,3 +153,22 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+.coverage
+*.sqlite*
+
+# Local tooling, not part of the platform
+.idea/
+skills-lock.json
+.agents/
+.claude/skills/
+# Separate repo (personal portfolio site) that happens to live in this folder
+PortfolioLanding/
+
+# Generated nginx routing (written by the control plane)
+infra/proxy/generated/*.conf
+
+# Local dev state (make dev-cp)
+.dev/
+
+# Temporary manifest created by the e2e test
+projects/_e2e/

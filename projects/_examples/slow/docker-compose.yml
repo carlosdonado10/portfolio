@@ -1,0 +1,17 @@
+# Example project: a stdlib HTTP server that turns healthy 20s after start.
+# Contract (docs/adding-a-project.md): entry service on the external network
+# orch-stacks with alias <id>-entry, no published host ports.
+services:
+  web:
+    build: ../fast
+    image: orch-example-slow:local
+    environment:
+      PROJECT_ID: slow
+      READY_AFTER_S: "20"
+    networks:
+      orch-stacks:
+        aliases: [slow-entry]
+
+networks:
+  orch-stacks:
+    external: true

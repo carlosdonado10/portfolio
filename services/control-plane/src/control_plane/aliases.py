@@ -1,0 +1,91 @@
+"""Anonymized Docker-style aliases for sessions (e.g. ``pensive_hopper``)."""
+
+import hashlib
+
+ADJECTIVES: tuple[str, ...] = (
+    "pensive",
+    "brave",
+    "calm",
+    "clever",
+    "curious",
+    "daring",
+    "eager",
+    "elegant",
+    "fervent",
+    "gentle",
+    "happy",
+    "hopeful",
+    "jolly",
+    "keen",
+    "lucid",
+    "merry",
+    "nimble",
+    "noble",
+    "patient",
+    "peaceful",
+    "playful",
+    "quirky",
+    "quiet",
+    "radiant",
+    "serene",
+    "sharp",
+    "steady",
+    "sunny",
+    "swift",
+    "thoughtful",
+    "vibrant",
+    "witty",
+    "zealous",
+    "amiable",
+    "bold",
+    "cheerful",
+)
+
+SURNAMES: tuple[str, ...] = (
+    "hopper",
+    "lovelace",
+    "noyce",
+    "wozniak",
+    "moore",
+    "turing",
+    "knuth",
+    "ritchie",
+    "thompson",
+    "torvalds",
+    "berners",
+    "cerf",
+    "kahn",
+    "hamilton",
+    "johnson",
+    "liskov",
+    "backus",
+    "mccarthy",
+    "minsky",
+    "engelbart",
+    "kay",
+    "wirth",
+    "dijkstra",
+    "lamport",
+    "hinton",
+    "lecun",
+    "bengio",
+    "hoare",
+    "stallman",
+    "gosling",
+    "jobs",
+    "grove",
+    "shockley",
+    "kilby",
+    "wing",
+    "sutherland",
+    "licklider",
+    "perlman",
+)
+
+
+def alias_for(sid: str) -> str:
+    """Deterministically map a session id to ``{adjective}_{surname}``."""
+    digest = hashlib.sha256(sid.encode()).digest()
+    adjective = ADJECTIVES[int.from_bytes(digest[:8], "big") % len(ADJECTIVES)]
+    surname = SURNAMES[int.from_bytes(digest[8:16], "big") % len(SURNAMES)]
+    return f"{adjective}_{surname}"

@@ -17,12 +17,20 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Workspace resolution needs the root manifest, the lockfile, and every member.
 COPY pyproject.toml uv.lock .python-version ./
+COPY services/common services/common
 COPY services/control-plane services/control-plane
 COPY services/agent services/agent
 
 # Install only the control-plane package's environment (agent code not installed).
-RUN uv sync --frozen --package control-plane
+RUN uv sync --frozen --no-dev --package control-plane
 
-EXPOSE 8000
-CMD ["uv", "run", "--frozen", "--package", "control-plane", \
-     "uvicorn", "control_plane.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Non-root runtime user; /data holds the SQLite file (mount a volume here).
+RUN useradd --system --uid 10001 --no-create-home orch \
+    && mkdir /data \
+    && chown orch:orch /data
+USER orch
+
+# 8000 public (proxied by nginx), 8001 agent API (orch-internal only).
+EXPOSE 8000 8001
+# uv is build-time only: running it as non-root would write its cache/venv.
+CMD ["/app/.venv/bin/python", "-m", "control_plane.main"]

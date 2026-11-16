@@ -22,6 +22,7 @@ applications, or only the platform that runs them?
 3. **Auth** — an explicit pillar, but at scaffold time satisfied by **Supabase
    connection env wiring only** (`.env.example`). Auth schema/logic is WS0.3;
    forward-auth proxy is WS0.2.
+   *Superseded by [ADR 0006](0006-orchestrator-no-login-single-domain.md): no login.*
 
 **Each ML/portfolio application lives in its own separate repo.** The agent
 clones/pulls those repos and runs *their* compose one-at-a-time via the Docker

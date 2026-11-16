@@ -1,0 +1,8 @@
+id = "fast"
+name = "Fast example"
+tagline = "A tiny stack that boots in two seconds."
+compose = "docker-compose.yml"
+entry = { service = "web", port = 8000 }
+health = { path = "/healthz", timeout_s = 10, interval_s = 1 }
+expected_boot_s = 2
+order = 1

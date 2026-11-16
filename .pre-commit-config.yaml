@@ -1,0 +1,117 @@
+# Quality gates that run on EVERY commit (and the commit message).
+#
+# Install once per clone:   make install     (runs `pre-commit install --install-hooks`)
+# Run on everything:        pre-commit run --all-files
+# CI runs the same config, so a skipped local hook still fails the PR.
+#
+# Python tools run through `uv run` so they use the exact versions pinned in uv.lock.
+
+default_install_hook_types: [pre-commit, commit-msg]
+default_stages: [pre-commit]
+fail_fast: false
+
+repos:
+  # --- Repo hygiene ---------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=500, --enforce-all]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: check-executables-have-shebangs
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: pretty-format-json
+        args: [--autofix, --indent=2, --no-sort-keys, --no-ensure-ascii]
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: [--branch, main]
+
+  # --- Secrets / .env leak prevention ---------------------------------------
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: forbid-env-files
+        name: forbid committing .env files (only .env.example is allowed)
+        language: fail
+        entry: ".env files hold secrets and must never be committed. Put example values in .env.example instead."
+        files: '(^|/)\.env(\..+)?$'
+        exclude: '(^|/)\.env\.example$'
+
+  # --- Python: format, lint, types, tests + coverage ------------------------
+  - repo: local
+    hooks:
+      - id: uv-lock
+        name: uv.lock is in sync with pyproject files
+        language: system
+        entry: uv lock --check
+        files: '(^|/)(pyproject\.toml|uv\.lock)$'
+        pass_filenames: false
+
+      - id: black
+        name: black (format)
+        language: system
+        entry: uv run --frozen black
+        types: [python]
+
+      - id: ruff
+        name: ruff (lint)
+        language: system
+        entry: uv run --frozen ruff check --fix --exit-non-zero-on-fix
+        types: [python]
+
+      - id: mypy
+        name: mypy (strict, service sources)
+        language: system
+        entry: uv run --frozen mypy services/common/src services/control-plane/src services/agent/src
+        types: [python]
+        pass_filenames: false
+
+      - id: vulture
+        name: vulture (no dead Python code)
+        language: system
+        entry: uv run --frozen vulture
+        types: [python]
+        pass_filenames: false
+
+      - id: pytest-coverage
+        name: pytest + coverage (fail under 80%)
+        language: system
+        entry: uv run --frozen pytest --cov --cov-report=term-missing -q
+        files: '\.py$|(^|/)(pyproject\.toml|uv\.lock)$'
+        pass_filenames: false
+
+  # --- Commit message -------------------------------------------------------
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+
+  # --- JS/TS: lint + dead code ----------------------------------------------
+  - repo: local
+    hooks:
+      - id: eslint
+        name: eslint (strict TypeScript, react-hooks)
+        language: system
+        entry: pnpm exec eslint --max-warnings=0
+        types_or: [ts, tsx]
+
+      - id: knip
+        name: knip (unused files, exports, dependencies)
+        language: system
+        entry: pnpm exec knip
+        types_or: [ts, tsx, json]
+        pass_filenames: false
