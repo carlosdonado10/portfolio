@@ -36,7 +36,7 @@ portfolio/
 ├── services/
 │   ├── common/            # uv member — orch_common (shared models + orchctl)
 │   ├── control-plane/     # uv member — FastAPI web API (GET /api/health; agent API :8001)
-│   └── agent/             # uv member — privileged host agent (heartbeat)
+│   └── agent/             # uv member — privileged host agent (reconciler)
 ├── infra/proxy/           # PLACEHOLDER — reverse proxy + forward-auth (WS0.2)
 ├── docs/decisions/        # ADRs (0001–0006)
 ├── docker-compose.yml     # 3 platform services; only agent gets the Docker socket
@@ -68,7 +68,7 @@ portfolio/
 make install      # pnpm install + uv sync
 make dev-web      # lab app            → http://localhost:5173
 make dev-cp       # control-plane API  → http://localhost:8000  (GET /api/health; agent API :8001)
-make dev-agent    # agent heartbeat loop
+make dev-agent    # agent reconciler (needs a Docker daemon + the control-plane on :8001)
 make test         # Python test suites
 ```
 

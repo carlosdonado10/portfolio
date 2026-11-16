@@ -29,7 +29,12 @@ dev-cp: ## Run the control-plane (public :8000, agent :8001)
 	ORCH_COOKIE_SECURE=false \
 	uv run --package control-plane python -m control_plane.main
 
-dev-agent: ## Run the agent heartbeat loop
+dev-agent: ## Run the agent (reconciler against the local control-plane)
+	mkdir -p .dev/repos
+	ORCH_CONTROL_PLANE_URL=http://localhost:8001 \
+	ORCH_PROJECTS_DIR=./projects \
+	ORCH_REPOS_DIR=./.dev/repos \
+	ORCH_INCLUDE_HIDDEN=1 \
 	uv run --package agent python -m agent
 
 lint: ## Run every pre-commit hook against the whole repo

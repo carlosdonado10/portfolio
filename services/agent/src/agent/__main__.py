@@ -1,50 +1,119 @@
-"""Agent entrypoint — emits a heartbeat until interrupted.
-
-Scaffold scope (WS-P0.1): a liveness loop proving the agent runs under uv (native
-dev) and inside its container. The real work — polling the control plane and
-bringing the ML app stacks up/down via the bind-mounted Docker socket — lands in
-WS3. This module deliberately depends on the standard library only.
-"""
+"""Agent entrypoint: long-poll desired state, converge the box, report observed state."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+import os
+import signal
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+from orch_common.manifest import load_manifests
+from orch_common.wire import DesiredState
+
+from agent.client import ControlPlaneClient
+from agent.driver import DockerComposeDriver
+from agent.probe import HttpHealthProbe
+from agent.reconciler import Reconciler
+
 logger = logging.getLogger("agent")
 
-HEARTBEAT_INTERVAL_SECONDS = 30.0
+
+class _Source(Protocol):
+    async def next_desired(self, after: int) -> DesiredState: ...
 
 
-def heartbeat_message(beat: int) -> str:
-    """Format the log line for a given heartbeat number."""
-    return f"agent alive — heartbeat #{beat}"
+class _Converger(Protocol):
+    async def converge(self, desired: DesiredState) -> bool: ...
+
+    async def watch_health(self, desired: DesiredState) -> None: ...
 
 
-def run(
-    interval: float = HEARTBEAT_INTERVAL_SECONDS,
-    max_beats: int | None = None,
-) -> None:
-    """Emit heartbeats forever (``max_beats=None``) or a bounded number.
-
-    ``max_beats`` bounds the loop so it is testable; production runs unbounded.
-    """
-    import time
-
-    beat = 0
-    while True:
-        beat += 1
-        logger.info(heartbeat_message(beat))
-        if max_beats is not None and beat >= max_beats:
-            return
-        time.sleep(interval)
+@dataclass(frozen=True)
+class Config:
+    control_plane_url: str
+    projects_dir: Path
+    repos_dir: Path
+    include_hidden: bool
 
 
-if __name__ == "__main__":  # pragma: no cover
+def config_from_env(env: Mapping[str, str]) -> Config:
+    return Config(
+        control_plane_url=env.get("ORCH_CONTROL_PLANE_URL", "http://control-plane:8001"),
+        projects_dir=Path(env.get("ORCH_PROJECTS_DIR", "/srv/orch/projects")),
+        repos_dir=Path(env.get("ORCH_REPOS_DIR", "/srv/orch/repos")),
+        include_hidden=env.get("ORCH_INCLUDE_HIDDEN", "").lower() in {"1", "true"},
+    )
+
+
+async def _cycle(reconciler: _Converger, desired: DesiredState) -> None:
     try:
-        run()
-    except KeyboardInterrupt:
-        logger.info("agent shutting down")
+        if await reconciler.converge(desired):
+            await reconciler.watch_health(desired)
+    except Exception:
+        logger.exception("reconcile cycle for generation %s crashed", desired.generation)
+
+
+async def run(client: _Source, reconciler: _Converger) -> None:
+    """Converge on every new desired generation; runs until cancelled.
+
+    The first fetch uses ``after_generation=-1`` so a restarted agent re-converges to
+    the current state at once. Stacks are deliberately left running on shutdown.
+    """
+    generation = -1
+    current: asyncio.Task[None] | None = None
+    try:
+        while True:
+            desired = await client.next_desired(generation)
+            if desired.generation == generation:
+                continue  # long-poll timeout with nothing new
+            generation = desired.generation
+            if current is not None:
+                current.cancel()
+                await asyncio.wait([current])
+            logger.info("desired generation %s: active=%s", generation, desired.active)
+            current = asyncio.create_task(_cycle(reconciler, desired))
+    finally:
+        if current is not None:
+            current.cancel()
+            await asyncio.wait([current])
+
+
+async def _amain(cfg: Config) -> None:
+    manifests = {m.id: m for m in load_manifests(cfg.projects_dir, cfg.include_hidden)}
+    client = ControlPlaneClient(cfg.control_plane_url)
+    probe = HttpHealthProbe()
+    reconciler = Reconciler(
+        manifests,
+        DockerComposeDriver(cfg.repos_dir),
+        probe,
+        client.report,
+        time.time,
+        asyncio.sleep,
+    )
+    task = asyncio.create_task(run(client, reconciler))
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, task.cancel)
+    try:
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    finally:
+        await client.aclose()
+        await probe.aclose()
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    asyncio.run(_amain(config_from_env(os.environ)))
+
+
+if __name__ == "__main__":
+    main()
