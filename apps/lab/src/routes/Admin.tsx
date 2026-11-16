@@ -35,15 +35,37 @@ function Console({ onSignedOut }: { onSignedOut: () => void }) {
         <button type="button" className="secondary" disabled={busy} onClick={() => void load()}>
           {t.refresh}
         </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={busy}
+          onClick={() => void run(api.adminLogout).then(onSignedOut)}
+        >
+          {t.signOut}
+        </button>
       </p>
       <p className="muted">
-        {t.forceStopWhy} {t.clearQueueWhy}
+        {t.forceStopWhy} {t.clearQueueWhy} {t.signOutWhy}
       </p>
       <ErrorAlert message={error} />
       {overview ? (
         <>
           <h3>{t.state}</h3>
           <pre>{JSON.stringify(overview.state, null, 2)}</pre>
+          <h3 id="observed-h">{t.observed}</h3>
+          <p className="muted">{t.observedWhy}</p>
+          {overview.observed.length === 0 ? (
+            <p>{t.noObserved}</p>
+          ) : (
+            <ul aria-labelledby="observed-h">
+              {overview.observed.map((r, i) => (
+                <li key={`${i}-${r.generation}-${r.at}`}>
+                  {new Date(r.at * 1000).toLocaleString()} {t.report(r)}
+                  {r.error ? <span className="error"> {r.error}</span> : null}
+                </li>
+              ))}
+            </ul>
+          )}
           <h3>{t.sessions}</h3>
           {overview.sessions.length === 0 ? (
             <p>{t.noSessions}</p>

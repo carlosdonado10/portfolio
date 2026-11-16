@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react"
 import { Link, useParams } from "react-router"
 
-import { api, type Project, type StatusBody } from "../api"
+import { api, webUrl, type Project, type StatusBody } from "../api"
 import BootProgress from "../components/BootProgress"
 import BoxPanel from "../components/BoxPanel"
 import Countdown from "../components/Countdown"
@@ -14,9 +14,11 @@ import { useStatus } from "../useStatus"
 const t = copy.interstitial
 
 function DemoLink({ project }: { project: Project }) {
+  const href = webUrl(project.demo_url)
+  if (!href) return null
   return (
     <p>
-      <a href={project.demo_url}>{t.demo}</a> <span className="muted">{t.demoNote}</span>
+      <a href={href}>{t.demo}</a> <span className="muted">{t.demoNote}</span>
     </p>
   )
 }
@@ -59,18 +61,10 @@ function View({
     </p>
   )
 
+  // A boot failure is shown by the app-wide notice from the SSE push: by the time
+  // the status poll runs, the lease has already been released or handed on.
   let body
-  if (status.status === "failed" && status.active === project.id) {
-    body = (
-      <>
-        <h2>{t.failed.heading(project.name)}</h2>
-        <p>{t.failed.body}</p>
-        <DemoLink project={project} />
-        {mine ? start(project, t.failed.retry) : null}
-        {mine ? stop : null}
-      </>
-    )
-  } else if (mine && status.status === "ready") {
+  if (mine && status.status === "ready") {
     body = (
       <>
         <h2>{t.ready.heading(project.name)}</h2>
@@ -109,11 +103,11 @@ function View({
         <h2>{t.queued.heading}</h2>
         <p>{t.queued.position(me.position, me.alias ?? "")}</p>
         {target ? <p>{t.queued.forProject(target.name)}</p> : null}
-        <p>{t.queued.estimate(me.position)}</p>
+        <p>{t.queued.estimate(me.position, status.lease)}</p>
         <p className="muted">{t.queued.stayHint}</p>
         <EmailForm />
         <p>
-          <button type="button" className="secondary" disabled={busy} onClick={() => void run(() => api.stop())}>
+          <button type="button" className="secondary" disabled={busy} onClick={() => void run(() => api.leave())}>
             {t.queued.leave}
           </button>
         </p>
@@ -130,7 +124,7 @@ function View({
         ) : null}
         <p>{t.busyQueue(status.queue.length)}</p>
         <p>{start(project, t.join(project.name))}</p>
-        <p className="muted">{t.busyHint}</p>
+        <p className="muted">{t.busyHint(status.lease)}</p>
         <DemoLink project={project} />
       </>
     )

@@ -2,7 +2,6 @@ import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
-import { TURN_MIN, HANDOFF_MIN } from "../copy"
 import { FakeEventSource, installApi, PROJECTS, renderAt, statusBody } from "../test-utils"
 
 const base = { "GET /api/projects": { body: PROJECTS } }
@@ -40,7 +39,7 @@ describe("Interstitial", () => {
     expect(screen.getByText(/only used to/i)).toBeInTheDocument()
   })
 
-  it("queue_estimate_uses_turn_and_handoff_constants", async () => {
+  it("queue_estimate_uses_lease_durations_from_status", async () => {
     installApi({
       ...base,
       "GET /api/status": {
@@ -52,12 +51,69 @@ describe("Interstitial", () => {
             { alias: "y", stack_id: "a", me: true },
           ],
           me: { role: "queued", position: 2, alias: "y" },
+          lease: { window_s: 600, grace_s: 120, idle_s: 60 },
         }),
       },
     })
     renderAt("/p/a")
-    expect(await screen.findByText(`up to ~${2 * (TURN_MIN + HANDOFF_MIN)} min`, { exact: false })).toBeInTheDocument()
-    expect(TURN_MIN + HANDOFF_MIN).toBe(18)
+    // 2 * (10 + 2) minutes, from the server's configuration, not constants.
+    expect(await screen.findByText("up to ~24 min", { exact: false })).toBeInTheDocument()
+    expect(screen.getByText(/each turn is 10 minutes plus a 2-minute handoff/i)).toBeInTheDocument()
+  })
+
+  it("leave_queue_posts_leave_not_stop", async () => {
+    const user = userEvent.setup()
+    const spy = installApi({
+      ...base,
+      "GET /api/status": {
+        body: statusBody({
+          active: "b",
+          status: "ready",
+          queue: [{ alias: "y", stack_id: "a", me: true }],
+          me: { role: "queued", position: 1, alias: "y" },
+        }),
+      },
+      "POST /api/leave": { status: 204, body: null },
+    })
+    renderAt("/p/a")
+    await user.click(await screen.findByRole("button", { name: /leave the queue/i }))
+    const posts = spy.mock.calls.filter(([, init]) => init?.method === "POST").map(([u]) => u)
+    expect(posts).toEqual(["/api/leave"])
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+  })
+
+  it("busy_copy_names_the_running_project_and_idle_rule", async () => {
+    installApi({
+      ...base,
+      "GET /api/status": {
+        body: statusBody({ active: "b", status: "ready", holder_alias: "Quiet Otter" }),
+      },
+    })
+    renderAt("/p/a")
+    expect(
+      await screen.findByText(/Beta Vision is running for Quiet Otter\. The box runs one stack/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/or another project/)).not.toBeInTheDocument()
+    expect(screen.getByText(/stops interacting for about 3 minutes/i)).toBeInTheDocument()
+  })
+
+  it("demo_link_hidden_without_a_web_url", async () => {
+    installApi({
+      "GET /api/projects": {
+        body: [
+          { ...PROJECTS[0], demo_url: null },
+          { ...PROJECTS[1], demo_url: "javascript:alert(1)" },
+        ],
+      },
+      "GET /api/status": { body: statusBody() },
+    })
+    const { unmount } = renderAt("/p/a")
+    expect(await screen.findByRole("button", { name: /run alpha rag live/i })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /demo/i })).not.toBeInTheDocument()
+    unmount()
+    renderAt("/p/b")
+    expect(await screen.findByRole("button", { name: /run beta vision live/i })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /demo/i })).not.toBeInTheDocument()
   })
 
   it("interstitial_redirects_holder_when_ready", async () => {
@@ -77,26 +133,6 @@ describe("Interstitial", () => {
     renderAt("/p/a")
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/p/a/"))
     expect(assign).toHaveBeenCalledTimes(1)
-  })
-
-  it("interstitial_failed_shows_demo_link", async () => {
-    installApi({
-      ...base,
-      "GET /api/status": {
-        body: statusBody({
-          active: "a",
-          status: "failed",
-          holder_alias: "Me",
-          me: { role: "holder", position: null, alias: "Me" },
-        }),
-      },
-    })
-    renderAt("/p/a")
-    expect((await screen.findAllByText(/health check/i)).length).toBeGreaterThan(0)
-    expect(screen.getByRole("link", { name: /demo/i })).toHaveAttribute(
-      "href",
-      "https://demo.example/a",
-    )
   })
 
   it("interstitial_switch_offered_to_holder_of_other_project", async () => {

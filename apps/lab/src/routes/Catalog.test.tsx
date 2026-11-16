@@ -28,4 +28,22 @@ describe("Catalog", () => {
     expect(screen.getByRole("heading", { name: "Alpha RAG" })).toBeInTheDocument()
     expect(screen.getByText(/Quiet Otter/)).toBeInTheDocument()
   })
+
+  it("catalog_tagline_counts_projects_and_hides_missing_demo", async () => {
+    installApi({
+      "GET /api/projects": { body: [PROJECTS[0], { ...PROJECTS[1], demo_url: null }] },
+      "GET /api/status": { body: statusBody() },
+    })
+    renderAt("/")
+    expect(await screen.findByText(/^2 machine-learning projects, one small server/i)).toBeInTheDocument()
+    expect(screen.queryByText(/five/i)).not.toBeInTheDocument()
+    expect(screen.getAllByRole("link", { name: /demo/i })).toHaveLength(1)
+  })
+
+  it("how_it_works_describes_the_agent_accurately", async () => {
+    installApi({ "GET /api/projects": { body: PROJECTS }, "GET /api/status": { body: statusBody() } })
+    renderAt("/")
+    expect(await screen.findByText(/holds the Docker socket/i)).toBeInTheDocument()
+    expect(screen.queryByText(/listens on a private socket/i)).not.toBeInTheDocument()
+  })
 })

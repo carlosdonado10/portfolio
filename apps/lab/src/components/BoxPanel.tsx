@@ -17,7 +17,6 @@ export default function BoxPanel({
   let line: string = copy.box.idle
   if (status.active) {
     if (status.status === "starting") line = copy.box.starting(name)
-    else if (status.status === "failed") line = copy.box.failed(name)
     else line = copy.box.runningFor(name, holder)
   }
   return (

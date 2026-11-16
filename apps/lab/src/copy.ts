@@ -1,11 +1,23 @@
 /** Every user-facing string lives here so the voice can be edited in one place. */
 
-/** One visitor's turn, and the pause between visitors. Editable in one place. */
-export const TURN_MIN = 15
-export const HANDOFF_MIN = 3
+/** Lease durations come from /api/status, so the copy matches the server's config. */
+interface LeaseTimes {
+  window_s: number
+  grace_s: number
+  idle_s: number
+}
 
-const queueEstimate = (position: number): string =>
-  `up to ~${position * (TURN_MIN + HANDOFF_MIN)} min`
+const mins = (s: number): number => Math.max(1, Math.round(s / 60))
+const minutes = (s: number): string => {
+  const m = mins(s)
+  return `${m} minute${m === 1 ? "" : "s"}`
+}
+
+const queueEstimate = (position: number, l: LeaseTimes): string =>
+  `up to ~${position * (mins(l.window_s) + mins(l.grace_s))} min`
+
+const idleRule = (l: LeaseTimes): string =>
+  `If someone is waiting and the visitor whose turn it is stops interacting for about ${minutes(l.idle_s)}, the turn hands over early.`
 
 const seconds = (n: number): string => `about ${n} seconds`
 
@@ -13,8 +25,8 @@ export const copy = {
   siteName: "The lab",
   skipLink: "Skip to content",
   nav: { catalog: "Projects", admin: "Owner" },
-  tagline:
-    "Five machine-learning projects, one small server. Run one live, or watch the recorded demo.",
+  tagline: (count: number | null): string =>
+    `${count === null ? "Machine-learning projects" : count === 1 ? "1 machine-learning project" : `${count} machine-learning projects`}, one small server. Run one live, or watch the recorded demo.`,
 
   loading: "Loading the latest state of the box...",
   loadError:
@@ -41,7 +53,6 @@ export const copy = {
     youHold: "you",
     starting: (project: string) =>
       `${project} is starting. It counts as ready only once its health check passes.`,
-    failed: (project: string) => `${project} failed its health check and was not opened.`,
     window: "Time left in the turn",
     grace: "Handing off to the next visitor in",
     queueHeading: "Queue",
@@ -59,7 +70,7 @@ export const copy = {
       },
       {
         title: "The Docker socket is isolated",
-        body: "Starting a stack needs Docker, which is effectively root. The only process that can reach the socket is a small agent that listens on a private socket, never on anything web-facing. This public site can only ask it to start or stop known projects.",
+        body: "Starting a stack needs Docker, which is effectively root. The only process that holds the Docker socket is a small agent with no open ports: it long-polls the control plane outbound over an internal network for what should run. This public site can only change that desired state, never reach Docker.",
       },
       {
         title: "Started isn't ready",
@@ -78,18 +89,18 @@ export const copy = {
     startWhy:
       "Starting loads the whole stack onto a shared 2-CPU box, which is why it takes a moment.",
     join: (project: string) => `Join the queue for ${project}`,
-    busy: (project: string, holder: string) =>
-      `${project} or another project is in use by ${holder}. The box runs one stack at a time because it only has 2 CPUs.`,
+    busy: (running: string, holder: string) =>
+      `${running} is running for ${holder}. The box runs one stack at a time because it only has 2 CPUs.`,
     busyQueue: (n: number) =>
       n === 0 ? "Nobody is waiting yet." : n === 1 ? "1 visitor is waiting." : `${n} visitors are waiting.`,
-    busyHint:
-      "Joining the queue holds your place. Each turn is 15 minutes, then a short handoff.",
+    busyHint: (l: LeaseTimes) =>
+      `Joining the queue holds your place. Each turn is ${minutes(l.window_s)} from when the project is ready, then a ${minutes(l.grace_s)} handoff warning. ${idleRule(l)}`,
     queued: {
       heading: "You're in the queue",
       position: (n: number, alias: string) => `Position ${n}, as ${alias}.`,
       forProject: (project: string) => `Waiting to run ${project}.`,
-      estimate: (position: number) =>
-        `Estimated wait: ${queueEstimate(position)}. That is an upper bound: each turn is ${TURN_MIN} minutes plus a ${HANDOFF_MIN}-minute handoff, and turns often end earlier.`,
+      estimate: (position: number, l: LeaseTimes) =>
+        `Estimated wait: ${queueEstimate(position, l)}. That is an upper bound: each turn is ${minutes(l.window_s)} plus a ${mins(l.grace_s)}-minute handoff, and turns often end earlier. ${idleRule(l)}`,
       leave: "Leave the queue",
       stayHint:
         "You can leave this tab open. It redirects you as soon as the project is ready.",
@@ -112,11 +123,6 @@ export const copy = {
       heading: (project: string) => `${project} is ready`,
       opening: "Opening it now...",
     },
-    failed: {
-      heading: (project: string) => `${project} didn't start`,
-      body: "The stack didn't pass its health check, so we didn't send you into a broken page. This can happen when the box is short of memory. The recorded demo shows the same thing.",
-      retry: "Try again",
-    },
     switchTo: {
       running: (project: string) => `You're running ${project}.`,
       why: "Only one project can run at a time. Switching stops it and starts the other.",
@@ -128,6 +134,11 @@ export const copy = {
     working: "Working...",
   },
 
+  notice: {
+    demo: "Watch the recorded demo instead",
+    dismiss: "Dismiss",
+  },
+
   errors: {
     generic: "Something went wrong, and the server didn't say why. Try again in a moment.",
     network: "Couldn't reach the server. Check your connection and try again.",
@@ -137,7 +148,6 @@ export const copy = {
     idle: "The box is idle.",
     running: (project: string) => `${project} is running.`,
     starting: (project: string) => `${project} is starting.`,
-    failed: (project: string) => `${project} failed to start.`,
     queued: (position: number) => `You are number ${position} in the queue.`,
   },
 
@@ -152,6 +162,13 @@ export const copy = {
     state: "Lease state",
     sessions: "Sessions",
     visits: "Recent visits",
+    observed: "Agent reports",
+    observedWhy: "The agent's latest observed states, newest first. Kept in memory, so a restart clears them.",
+    noObserved: "No reports since the control plane started.",
+    report: (r: { generation: number; stack_id: string | null; status: string; source: string }) =>
+      `generation ${r.generation}: ${r.stack_id ?? "nothing"} ${r.status}${r.source === "watchdog" ? " (boot watchdog)" : ""}`,
+    signOut: "Sign out",
+    signOutWhy: "Sign out before opening a project: project pages share this origin.",
     noSessions: "No sessions yet.",
     noVisits: "No visits yet.",
     forceStop: "Force stop",

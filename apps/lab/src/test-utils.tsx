@@ -34,6 +34,7 @@ export function statusBody(over: Partial<StatusBody> = {}): StatusBody {
     grace_deadline: null,
     queue: [],
     me: { role: "none", position: null, alias: null },
+    lease: { window_s: 900, grace_s: 180, idle_s: 180 },
     ...over,
   }
 }
@@ -67,7 +68,7 @@ export function installApi(routes: Routes) {
     if (!entry) return Promise.resolve(new Response("not mocked: " + key, { status: 500 }))
     const reply = typeof entry === "function" ? entry() : entry
     return Promise.resolve(
-      new Response(JSON.stringify(reply.body), {
+      new Response(reply.status === 204 ? null : JSON.stringify(reply.body), {
         status: reply.status ?? 200,
         headers: { "content-type": "application/json" },
       }),

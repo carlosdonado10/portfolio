@@ -1,5 +1,6 @@
 import { Link, NavLink, Route, Routes } from "react-router"
 
+import NoticeBanner from "./components/NoticeBanner"
 import { copy } from "./copy"
 import Admin from "./routes/Admin"
 import Catalog from "./routes/Catalog"
@@ -16,12 +17,11 @@ function announcement(
   if (s.me.role === "queued" && s.me.position !== null) return copy.announce.queued(s.me.position)
   if (!s.active) return copy.announce.idle
   if (s.status === "starting") return copy.announce.starting(name)
-  if (s.status === "failed") return copy.announce.failed(name)
   return copy.announce.running(name)
 }
 
 export default function App() {
-  const { status, projects } = useStatus()
+  const { status, projects, notice, dismissNotice } = useStatus()
   return (
     <>
       <a className="skip" href="#main">
@@ -42,6 +42,7 @@ export default function App() {
         <div className="sr-only" role="status" aria-live="polite">
           {announcement(status, projects)}
         </div>
+        {notice ? <NoticeBanner notice={notice} onDismiss={dismissNotice} /> : null}
         <Routes>
           <Route path="/" element={<Catalog />} />
           <Route path="/p/:id" element={<Interstitial />} />
