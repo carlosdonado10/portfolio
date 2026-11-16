@@ -23,3 +23,8 @@ Settings.repos_dir
 import sqlite3  # noqa: E402
 
 sqlite3.Connection.row_factory
+
+# Overrides called by uvicorn, not by our code.
+from control_plane.main import _Server  # noqa: E402
+
+_Server.capture_signals

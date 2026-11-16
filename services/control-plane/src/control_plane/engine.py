@@ -77,6 +77,9 @@ class Engine:
         state = replace(state, lease=lease, queue=queue)
         return cls(store, hub, mailer, manifests, cfg, clock, public_base_url, state=state)
 
+    def close(self) -> None:
+        self._store.close()
+
     @property
     def state(self) -> State:
         return self._state

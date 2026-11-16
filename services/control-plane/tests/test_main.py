@@ -1,6 +1,9 @@
+import asyncio
+
 import httpx
+import pytest
 from control_plane.mailer import NullMailer, ResendMailer
-from control_plane.main import build
+from control_plane.main import build, run
 from control_plane.settings import Settings
 
 SECRETS = {"cookie_secret": "c" * 20, "owner_secret": "o" * 20}
@@ -35,3 +38,51 @@ def test_build_picks_mailer_from_settings(tmp_path):
     *_, resend_engine = build(settings(tmp_path, resend_api_key="k", email_from="a@b.dev"))
     assert isinstance(null_engine._mailer, NullMailer)
     assert isinstance(resend_engine._mailer, ResendMailer)
+
+
+class FakeServer:
+    def __init__(self, behaviour="block"):
+        self.should_exit = False
+        self.behaviour = behaviour
+
+    async def serve(self):
+        if self.behaviour == "return":
+            return
+        if self.behaviour == "exit":
+            raise SystemExit(1)
+        while not self.should_exit:
+            await asyncio.sleep(0.01)
+
+
+async def forever():
+    await asyncio.sleep(3600)
+
+
+async def crash():
+    raise RuntimeError("tick boom")
+
+
+async def test_serve_exits_nonzero_when_ticker_crashes():
+    servers = [FakeServer(), FakeServer()]
+    code = await asyncio.wait_for(run(servers, crash(), asyncio.Event()), 2)
+    assert code == 1
+    assert all(s.should_exit for s in servers)
+
+
+@pytest.mark.parametrize("behaviour", ["return", "exit"])
+async def test_serve_exits_nonzero_when_a_server_returns(behaviour):
+    servers = [FakeServer(behaviour), FakeServer()]
+    code = await asyncio.wait_for(run(servers, forever(), asyncio.Event()), 2)
+    assert code == 1
+    assert servers[1].should_exit
+
+
+async def test_serve_shutdown_signal_stops_everything_cleanly():
+    servers = [FakeServer(), FakeServer()]
+    stop = asyncio.Event()
+    task = asyncio.create_task(run(servers, forever(), stop))
+    await asyncio.sleep(0.05)
+    assert not task.done()
+    stop.set()
+    assert await asyncio.wait_for(task, 2) == 0
+    assert all(s.should_exit for s in servers)

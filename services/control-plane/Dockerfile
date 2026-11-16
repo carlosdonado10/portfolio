@@ -32,4 +32,5 @@ USER orch
 
 # 8000 public (proxied by nginx), 8001 agent API (orch-internal only).
 EXPOSE 8000 8001
-CMD ["uv", "run", "--frozen", "--package", "control-plane", "python", "-m", "control_plane.main"]
+# uv is build-time only: running it as non-root would write its cache/venv.
+CMD ["/app/.venv/bin/python", "-m", "control_plane.main"]

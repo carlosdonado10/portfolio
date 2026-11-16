@@ -28,6 +28,9 @@ class Store:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA)
 
+    def close(self) -> None:
+        self._db.close()
+
     def load_state(self) -> State:
         row = self._db.execute("SELECT json FROM state WHERE id = 1").fetchone()
         return State() if row is None else State.from_json(row["json"])
