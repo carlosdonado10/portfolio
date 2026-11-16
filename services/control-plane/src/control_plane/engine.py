@@ -81,6 +81,14 @@ class Engine:
     def state(self) -> State:
         return self._state
 
+    @property
+    def hub(self) -> Hub:
+        return self._hub
+
+    @property
+    def manifests(self) -> dict[str, Manifest]:
+        return self._manifests
+
     def desired(self) -> DesiredState:
         lease = self._state.lease
         return DesiredState(
