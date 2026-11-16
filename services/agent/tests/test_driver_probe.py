@@ -1,3 +1,5 @@
+import asyncio
+
 import httpx
 import pytest
 from agent.driver import ComposeError, DockerComposeDriver
@@ -34,7 +36,7 @@ async def test_up_argv(tmp_path, make_manifest):
     assert sp.argvs == [
         (
             "docker", "compose", "-p", "orch-a", "-f", str(m.compose_path(tmp_path)),
-            "up", "-d", "--no-build", "--remove-orphans",
+            "up", "-d", "--no-build", "--pull", "never", "--remove-orphans",
         )
     ]  # fmt: skip
 
@@ -136,3 +138,54 @@ async def test_probe_connection_error_is_unhealthy(make_manifest):
 async def test_probe_default_client_closes():
     p = HttpHealthProbe()
     await p.aclose()
+
+
+async def test_up_argv_includes_pull_never(tmp_path, make_manifest):
+    sp = Spawner(FakeProc())
+    await DockerComposeDriver(tmp_path, sp).up(make_manifest("a"))
+    argv = sp.argvs[0]
+    assert argv[argv.index("--pull") + 1] == "never"
+
+
+async def test_down_project_by_name(tmp_path):
+    sp = Spawner(FakeProc())
+    await DockerComposeDriver(tmp_path, sp).down_project("orch-ghost")
+    assert sp.argvs[0] == ("docker", "compose", "-p", "orch-ghost", "down", "--remove-orphans")
+
+
+class HangingProc:
+    returncode = None
+
+    def __init__(self):
+        self.killed = False
+        self.waited = False
+
+    async def communicate(self):
+        await asyncio.sleep(3600)
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self):
+        self.waited = True
+
+
+async def test_cancel_during_up_kills_subprocess(tmp_path, make_manifest):
+    proc = HangingProc()
+    sp = Spawner(proc)
+    task = asyncio.create_task(DockerComposeDriver(tmp_path, sp).up(make_manifest("a")))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert proc.killed and proc.waited
+
+
+async def test_up_timeout_reports_failed(tmp_path, make_manifest):
+    proc = HangingProc()
+    sp = Spawner(proc)
+    m = make_manifest("a", timeout_s=0)
+    with pytest.raises(ComposeError, match="compose up exceeded 0 seconds"):
+        await DockerComposeDriver(tmp_path, sp).up(m)
+    assert proc.killed and proc.waited

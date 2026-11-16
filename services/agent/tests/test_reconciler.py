@@ -22,6 +22,10 @@ class FakeDriver:
         self.calls.append(("down", m.id))
         self._running.discard(m.id)
 
+    async def down_project(self, project_name):
+        self.calls.append(("down_project", project_name))
+        self._running.discard(project_name.removeprefix("orch-"))
+
     async def running(self):
         return set(self._running)
 
@@ -90,11 +94,11 @@ async def test_converge_none_downs_all_reports_stopped(manifests):
     assert reports[0].generation == 3
 
 
-async def test_running_project_without_manifest_is_left_alone(manifests):
+async def test_converge_downs_ghost_projects_without_manifest(manifests):
     driver = FakeDriver(running={"ghost"})
     r, reports, _ = build(manifests, driver, ScriptedProbe(True))
     await r.converge(DesiredState(active=None, generation=1))
-    assert driver.calls == []
+    assert driver.calls == [("down_project", "orch-ghost")]
     assert statuses(reports) == [StackStatus.STOPPED]
 
 
@@ -232,3 +236,11 @@ async def test_unknown_stack_reports_failed(manifests):
     assert statuses(reports) == [StackStatus.FAILED]
     assert reports[0].stack_id == "zzz"
     assert "unknown stack" in (reports[0].error or "")
+
+
+async def test_up_timeout_reports_failed(manifests):
+    driver = FakeDriver(up_error=ComposeError("compose up exceeded 10 seconds"))
+    r, reports, _ = build(manifests, driver, ScriptedProbe(True))
+    await r.converge(DesiredState(active="a", generation=2))
+    assert statuses(reports) == [StackStatus.STARTING, StackStatus.FAILED]
+    assert "exceeded 10 seconds" in (reports[-1].error or "")

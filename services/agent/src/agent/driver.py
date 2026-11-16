@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import Callable
@@ -25,6 +26,10 @@ class ComposeDriver(Protocol):
     async def up(self, m: Manifest) -> None: ...
 
     async def down(self, m: Manifest) -> None: ...
+
+    async def down_project(self, project_name: str) -> None:
+        """Tear down a project by compose project name (no manifest needed)."""
+        ...
 
     async def running(self) -> set[str]:
         """Ids (without the ``orch-`` prefix) of projects with running containers."""
@@ -55,7 +60,16 @@ class DockerComposeDriver:
             )
             out: bytes
             err: bytes
-            out, err = await proc.communicate()
+            try:
+                out, err = await proc.communicate()
+            except BaseException:
+                # Cancelled or timed out: never orphan a running compose child, or a
+                # later generation could race it and leave two stacks up.
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                await proc.wait()
+                raise
         except OSError as e:
             raise ComposeError(f"cannot run docker: {e}") from e
         if proc.returncode != 0:
@@ -67,10 +81,13 @@ class DockerComposeDriver:
         if m.repo and not compose.is_file():
             raise ComposeError(_prepare_hint(m))
         try:
-            await self._run(
-                "docker", "compose", "-p", m.project_name, "-f", str(compose),
-                "up", "-d", "--no-build", "--remove-orphans",
-            )  # fmt: skip
+            async with asyncio.timeout(m.health.timeout_s):
+                await self._run(
+                    "docker", "compose", "-p", m.project_name, "-f", str(compose),
+                    "up", "-d", "--no-build", "--pull", "never", "--remove-orphans",
+                )  # fmt: skip
+        except TimeoutError as e:
+            raise ComposeError(f"compose up exceeded {m.health.timeout_s} seconds") from e
         except ComposeError as e:
             if any(marker in str(e).lower() for marker in _MISSING_IMAGE_MARKERS):
                 raise ComposeError(_prepare_hint(m)) from e
@@ -84,6 +101,9 @@ class DockerComposeDriver:
         await self._run(
             "docker", "compose", "-p", m.project_name, *file_args, "down", "--remove-orphans"
         )
+
+    async def down_project(self, project_name: str) -> None:
+        await self._run("docker", "compose", "-p", project_name, "down", "--remove-orphans")
 
     async def running(self) -> set[str]:
         out = await self._run("docker", "compose", "ls", "--format", "json")

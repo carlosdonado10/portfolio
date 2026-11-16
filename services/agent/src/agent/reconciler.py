@@ -58,7 +58,8 @@ class Reconciler:
                     continue
                 other = self._manifests.get(stack_id)
                 if other is None:
-                    logger.warning("running project orch-%s has no manifest; leaving it", stack_id)
+                    logger.warning("running project orch-%s has no manifest; downing", stack_id)
+                    await self._driver.down_project(f"orch-{stack_id}")
                     continue
                 await self._driver.down(other)
             if active is None:
