@@ -20,6 +20,11 @@ export const copy = {
   loadError:
     "Couldn't reach the control plane, so the status below may be stale. This page retries every few seconds on its own.",
 
+  projectsFailed: {
+    body: "Couldn't load the project list, so there is nothing to show yet, and the demo links come from that list too. This page keeps retrying on its own; you can also retry now.",
+    retry: "Retry now",
+  },
+
   catalog: {
     heading: "Projects you can run live",
     eta: (n: number) => `Boots in ${seconds(n)}`,

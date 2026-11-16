@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
 import { TURN_MIN, HANDOFF_MIN } from "../copy"
-import { installApi, PROJECTS, renderAt, statusBody } from "../test-utils"
+import { FakeEventSource, installApi, PROJECTS, renderAt, statusBody } from "../test-utils"
 
 const base = { "GET /api/projects": { body: PROJECTS } }
 
@@ -149,5 +149,38 @@ describe("Interstitial", () => {
     const bar = await screen.findByRole("progressbar")
     expect(Number(bar.getAttribute("aria-valuenow"))).toBeLessThanOrEqual(95)
     expect(screen.getByText(/started isn't ready/i)).toBeInTheDocument()
+  })
+})
+
+describe("Interstitial resilience", () => {
+  it("projects_load_failure_retries_and_recovers", async () => {
+    let calls = 0
+    installApi({
+      "GET /api/projects": () => (calls++ === 0 ? { status: 500, body: {} } : { body: PROJECTS }),
+      "GET /api/status": { body: statusBody() },
+    })
+    renderAt("/p/a")
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn't load the project list/i)
+    expect(screen.getByRole("button", { name: /retry now/i })).toBeInTheDocument()
+    FakeEventSource.instances[0]?.emit({ type: "queue_changed" })
+    expect(await screen.findByRole("button", { name: /run alpha rag live/i })).toBeInTheDocument()
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+  })
+
+  it("countdown_is_not_in_a_live_region", async () => {
+    installApi({
+      ...base,
+      "GET /api/status": {
+        body: statusBody({
+          active: "b",
+          status: "ready",
+          holder_alias: "Quiet Otter",
+          window_ends_at: Date.now() / 1000 + 600,
+        }),
+      },
+    })
+    renderAt("/p/a")
+    const timers = await screen.findAllByRole("timer")
+    for (const t of timers) expect(t.closest("[aria-live]")).toBeNull()
   })
 })

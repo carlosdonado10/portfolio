@@ -5,12 +5,22 @@ import { copy } from "../copy"
 import { useStatus } from "../useStatus"
 
 export default function Catalog() {
-  const { status, projects, error } = useStatus()
+  const { status, projects, error, projectsFailed, refresh } = useStatus()
   return (
     <>
       <p className="lede">{copy.tagline}</p>
       {error ? <p className="muted">{copy.loadError}</p> : null}
-      {status && projects ? <BoxPanel status={status} projects={projects} /> : <p>{copy.loading}</p>}
+      {projectsFailed && !projects ? (
+        <section className="card">
+          <p role="alert" className="error">
+            {copy.projectsFailed.body}
+          </p>
+          <button type="button" onClick={() => void refresh()}>
+            {copy.projectsFailed.retry}
+          </button>
+        </section>
+      ) : null}
+      {status && projects ? <BoxPanel status={status} projects={projects} /> : projectsFailed ? null : <p>{copy.loading}</p>}
 
       <section aria-labelledby="projects-h">
         <h2 id="projects-h">{copy.catalog.heading}</h2>

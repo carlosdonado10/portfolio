@@ -6,10 +6,11 @@ export interface StatusSnapshot {
   status: StatusBody | null
   projects: Project[] | null
   error: string | null
+  projectsFailed: boolean
 }
 
 const POLL_MS = 10_000
-const EMPTY: StatusSnapshot = { status: null, projects: null, error: null }
+const EMPTY: StatusSnapshot = { status: null, projects: null, error: null, projectsFailed: false }
 
 /**
  * One app-wide store: a single EventSource and a single poll timer, shared by
@@ -28,6 +29,7 @@ function set(patch: Partial<StatusSnapshot>) {
 
 async function refresh(): Promise<void> {
   const gen = generation
+  if (snapshot.projects === null) void loadProjects()
   try {
     const status = await api.status()
     if (gen === generation) set({ status, error: null })
@@ -40,15 +42,15 @@ async function loadProjects(): Promise<void> {
   const gen = generation
   try {
     const projects = await api.projects()
-    if (gen === generation) set({ projects })
+    if (gen === generation) set({ projects, projectsFailed: false })
   } catch {
-    // surfaced via the status error; the next subscriber start retries
+    // retried by refresh() on every poll tick and SSE message while projects is null
+    if (gen === generation) set({ projectsFailed: true })
   }
 }
 
 function start() {
   generation++
-  void loadProjects()
   void refresh()
   timer = setInterval(() => void refresh(), POLL_MS)
   if (typeof EventSource !== "undefined") {

@@ -149,7 +149,7 @@ function View({
 
   return (
     <>
-      <section aria-live="polite" className="card">
+      <section className="card">
         {body}
         <ErrorAlert message={error} />
       </section>
@@ -160,7 +160,7 @@ function View({
 
 export default function Interstitial() {
   const { id } = useParams()
-  const { status, projects, error, refresh } = useStatus()
+  const { status, projects, error, projectsFailed, refresh } = useStatus()
   const project = projects?.find((p) => p.id === id)
   return (
     <>
@@ -168,7 +168,16 @@ export default function Interstitial() {
         <Link to="/">{t.back}</Link>
       </p>
       {error ? <p className="muted">{copy.loadError}</p> : null}
-      {!status || !projects ? (
+      {projectsFailed && !projects ? (
+        <section className="card">
+          <p role="alert" className="error">
+            {copy.projectsFailed.body}
+          </p>
+          <button type="button" onClick={() => void refresh()}>
+            {copy.projectsFailed.retry}
+          </button>
+        </section>
+      ) : !status || !projects ? (
         <p>{copy.loading}</p>
       ) : !project ? (
         <p>{t.unknownProject}</p>
