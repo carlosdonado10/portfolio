@@ -38,7 +38,16 @@ async function refresh(): Promise<void> {
   }
 }
 
-async function loadProjects(): Promise<void> {
+let projectsInFlight: Promise<void> | null = null
+
+function loadProjects(): Promise<void> {
+  projectsInFlight ??= fetchProjects().finally(() => {
+    projectsInFlight = null
+  })
+  return projectsInFlight
+}
+
+async function fetchProjects(): Promise<void> {
   const gen = generation
   try {
     const projects = await api.projects()
@@ -61,6 +70,7 @@ function start() {
 
 function stop() {
   generation++
+  projectsInFlight = null
   clearInterval(timer)
   timer = undefined
   source?.close()

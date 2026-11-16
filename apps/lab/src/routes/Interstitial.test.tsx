@@ -184,3 +184,34 @@ describe("Interstitial resilience", () => {
     for (const t of timers) expect(t.closest("[aria-live]")).toBeNull()
   })
 })
+
+describe("Interstitial projects retries", () => {
+  it("projects_load_is_not_duplicated_while_in_flight", async () => {
+    const spy = installApi({ "GET /api/status": { body: statusBody() } })
+    const never = new Promise<Response>(() => {})
+    const inner = spy.getMockImplementation()
+    spy.mockImplementation((input, init) =>
+      String(input) === "/api/projects" ? never : (inner?.(input, init) ?? never),
+    )
+    renderAt("/p/a")
+    await screen.findByText(/loading/i)
+    for (let i = 0; i < 3; i++) {
+      FakeEventSource.instances[0]?.emit({ type: "queue_changed" })
+      await Promise.resolve()
+    }
+    await waitFor(() => expect(spy.mock.calls.filter(([u]) => u === "/api/status").length).toBeGreaterThan(2))
+    expect(spy.mock.calls.filter(([u]) => u === "/api/projects")).toHaveLength(1)
+  })
+
+  it("projects_retry_button_recovers", async () => {
+    const user = userEvent.setup()
+    let calls = 0
+    installApi({
+      "GET /api/projects": () => (calls++ === 0 ? { status: 500, body: {} } : { body: PROJECTS }),
+      "GET /api/status": { body: statusBody() },
+    })
+    renderAt("/p/a")
+    await user.click(await screen.findByRole("button", { name: /retry now/i }))
+    expect(await screen.findByRole("button", { name: /run alpha rag live/i })).toBeInTheDocument()
+  })
+})
