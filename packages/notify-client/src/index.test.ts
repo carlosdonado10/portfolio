@@ -79,6 +79,27 @@ describe("renderToast", () => {
     expect(good.querySelector("a")?.getAttribute("href")).toBe("https://demo.example/a")
   })
 
+  it("replacing_grace_toast_clears_its_interval", () => {
+    vi.setSystemTime(1_000_000)
+    const root = newRoot()
+    renderToast(root, { type: "grace_started", title: "a", body: "b", deadline: 1_100 })
+    const spy = vi.spyOn(globalThis, "clearInterval")
+    renderToast(root, { type: "grace_started", title: "c", body: "d", deadline: 1_200 })
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(1)
+    expect(root.querySelectorAll(".toast")).toHaveLength(1)
+  })
+
+  it("grace_cancelled_dismisses_grace_toast", () => {
+    vi.setSystemTime(1_000_000)
+    const root = newRoot()
+    const g = renderToast(root, { type: "grace_started", title: "a", body: "b", deadline: 1_100 })
+    renderToast(root, { type: "grace_cancelled", title: "ok", body: "kept" })
+    expect(g.isConnected).toBe(false)
+    expect(root.querySelectorAll(".toast")).toHaveLength(1)
+    expect(vi.getTimerCount()).toBe(1) // only the new toast's auto-dismiss timeout
+  })
+
   it("auto_dismisses_except_grace_and_evicted", () => {
     const root = newRoot()
     const a = renderToast(root, { type: "your_turn", title: "x", body: "y" })

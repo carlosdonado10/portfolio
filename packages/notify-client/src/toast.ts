@@ -25,6 +25,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid #f0b89f; outline-offs
 @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 `
 
+const dismissers = new WeakMap<HTMLElement, () => void>()
+const SUPERSEDES_GRACE = new Set(["grace_cancelled", "your_turn", "stack_ready", "evicted", "stack_failed"])
+
 export const PERSISTENT = new Set(["grace_started", "evicted"])
 const AUTO_DISMISS_MS = 8000
 
@@ -109,12 +112,16 @@ export function renderToast(root: ShadowRoot, msg: NotifyMessage): HTMLElement {
   }
   close.addEventListener("click", dismiss)
   el.append(close)
+  dismissers.set(el, dismiss)
 
   if (!persistent) autoTimer = setTimeout(dismiss, AUTO_DISMISS_MS)
 
   // Persistent toasts replace each other (a new grace/eviction supersedes the old).
-  if (persistent) {
-    stack.querySelectorAll(".toast.warn").forEach((t) => t.remove())
+  const stale: string[] = []
+  if (persistent) stale.push(".toast.warn")
+  if (SUPERSEDES_GRACE.has(msg.type)) stale.push('.toast[data-type="grace_started"]')
+  if (stale.length) {
+    stack.querySelectorAll<HTMLElement>(stale.join(",")).forEach((t) => dismissers.get(t)?.())
   }
   stack.append(el)
   return el
