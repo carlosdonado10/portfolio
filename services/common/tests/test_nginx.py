@@ -86,3 +86,72 @@ def test_render_to_stdout(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     make(tmp_path, "fast")
     assert main(["render-nginx", "--projects", str(tmp_path), "--out", "-"]) == 0
     assert "location /p/fast/ {" in capsys.readouterr().out
+
+
+def test_render_redirects_bare_project_path_to_trailing_slash(tmp_path: Path) -> None:
+    out = render_projects_conf(manifests(tmp_path))
+    assert "location = /p/fast { return 301 /p/fast/; }" in out
+    assert "location = /p/slow-two { return 301 /p/slow-two/; }" in out
+
+
+# -- static gateway config ---------------------------------------------------
+
+PROXY = Path(__file__).resolve().parents[3] / "infra" / "proxy"
+
+
+def _strip_maps() -> list[tuple[str, str, str, str]]:
+    """(source var, target var, regex, replacement) for each cookie-stripping map."""
+    import re
+
+    conf = (PROXY / "nginx.conf").read_text()
+    blocks = re.findall(
+        r"map \$(\w+) \$(project_cookie\w*) \{\s*default \$\w+;\s*\"~(.+?)\"\s+\"(.+?)\";\s*\}",
+        conf,
+    )
+    return [(src, dst, rx, rep) for src, dst, rx, rep in blocks]
+
+
+def _apply_maps(cookie: str) -> str:
+    import re
+
+    values = {"http_cookie": cookie}
+    for src, dst, rx, rep in _strip_maps():
+        value = values[src]
+        m = re.search(rx, value)
+        # nginx: $1/$2 refer to the regex captures; no match falls back to default.
+        values[dst] = rep.replace("$1", m.group(1)).replace("$2", m.group(2)) if m else value
+    return values["project_cookie"]
+
+
+@pytest.mark.parametrize(
+    ("cookie", "expected"),
+    [
+        ("orch_sid=abc", ""),
+        ("x=1; orch_sid=abc; y=2", "x=1; y=2"),
+        ("orch_sid=abc; x=1", "x=1"),
+        ("x=1; orch_admin=zz; orch_sid=abc", "x=1; "),
+        ("orch_admin=zz; theme=dark; orch_sid=abc", "theme=dark; "),
+        ("theme=dark", "theme=dark"),
+        ("myorch_sid=keep", "myorch_sid=keep"),
+        ("", ""),
+    ],
+)
+def test_project_upstreams_never_see_orch_cookies(cookie: str, expected: str) -> None:
+    assert len(_strip_maps()) == 2  # orch_sid and a legacy Path=/ orch_admin
+    assert _apply_maps(cookie) == expected
+
+
+def test_project_snippet_forwards_stripped_cookie_and_gate_keeps_full_cookie(
+    tmp_path: Path,
+) -> None:
+    snippet = (PROXY / "snippets" / "project-proxy.conf").read_text()
+    assert "proxy_set_header Cookie $project_cookie;" in snippet
+    gate = render_projects_conf(manifests(tmp_path)).split("location = /_gate/fast {")[1]
+    assert "proxy_set_header Cookie $http_cookie;" in gate.split("}")[0]
+
+
+def test_gateway_resolver_ttl_is_short() -> None:
+    conf = (PROXY / "nginx.conf").read_text()
+    assert "resolver 127.0.0.11 valid=2s ipv6=off;" in conf
+    assert "# set_real_ip_from" in conf
+    assert "# real_ip_header" in conf
