@@ -100,3 +100,13 @@ def test_sorted_by_order_then_id(tmp_path: Path) -> None:
     write(tmp_path, "a", "a", extra="order = 5")
     write(tmp_path, "c", "c", extra="order = 1")
     assert [m.id for m in load_manifests(tmp_path)] == ["b", "c", "a"]
+
+
+def test_id_length_cap(tmp_path: Path) -> None:
+    ok = "a" * 40
+    write(tmp_path, ok, ok)
+    assert [m.id for m in load_manifests(tmp_path)] == [ok]
+    bad = "b" * 41
+    write(tmp_path, bad, bad)
+    with pytest.raises(ManifestError):
+        load_manifests(tmp_path)

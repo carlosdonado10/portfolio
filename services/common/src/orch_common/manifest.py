@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, ValidationError, field_validator
 
-_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 
 
 class ManifestError(Exception):
