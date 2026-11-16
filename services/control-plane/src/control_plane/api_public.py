@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import secrets
 import time
@@ -11,7 +12,7 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
-from itsdangerous import BadSignature, URLSafeSerializer
+from itsdangerous import BadSignature, URLSafeSerializer, URLSafeTimedSerializer
 from orch_common.manifest import Manifest
 from orch_common.wire import StackStatus
 from pydantic import BaseModel, EmailStr
@@ -30,12 +31,13 @@ from control_plane.lease import (
     StopRequested,
 )
 from control_plane.ratelimit import TokenBucket
-from control_plane.settings import Settings
+from control_plane.settings import MIN_SECRET_LEN, Settings
 from control_plane.store import Store
 
 SID_COOKIE = "orch_sid"
 ADMIN_COOKIE = "orch_admin"
 COOKIE_MAX_AGE = 30 * 24 * 3600
+ADMIN_MAX_AGE = 12 * 3600
 
 NO_COOKIE = (
     "We use one anonymous cookie to hold your place in line. There's no account "
@@ -49,6 +51,10 @@ RATE_LIMITED = (
 BAD_EMAIL = (
     "That doesn't look like a valid email address. It's only used to tell you "
     "when your turn comes up or your project is ready."
+)
+LOGIN_RATE_LIMITED = (
+    "Too many login attempts. Wait a minute before trying again; this limit "
+    "exists so the owner secret can't be guessed by brute force."
 )
 BAD_REQUEST = "That request was malformed. Check the fields and try again."
 ADMIN_REQUIRED = "This area is for the site owner and needs the owner secret."
@@ -107,10 +113,22 @@ def create_public_app(
     clock: Callable[[], float] = time.time,
 ) -> FastAPI:
     app = FastAPI(title="Portfolio Control Plane", version="0.1.0")
+    for name, value in (
+        ("cookie_secret", settings.cookie_secret),
+        ("owner_secret", settings.owner_secret),
+    ):
+        if len(value) < MIN_SECRET_LEN:
+            raise ValueError(f"{name} must be at least {MIN_SECRET_LEN} characters")
     catalog = manifests if manifests is not None else engine.manifests
     visible = {k: m for k, m in catalog.items() if settings.include_hidden or not m.hidden}
     sid_signer = URLSafeSerializer(settings.cookie_secret, salt="orch-sid")
-    admin_signer = URLSafeSerializer(settings.cookie_secret, salt="orch-admin")
+    admin_signer = URLSafeTimedSerializer(settings.cookie_secret, salt="orch-admin")
+    # Bound to the owner secret, so rotating it revokes every issued admin cookie.
+    admin_token = {
+        "r": "owner",
+        "k": hashlib.sha256(settings.owner_secret.encode()).hexdigest(),
+    }
+    login_limit = TokenBucket(5)
     ip_limit = TokenBucket(10)
     sid_limit = TokenBucket(5)
 
@@ -135,9 +153,15 @@ def create_public_app(
         if not raw:
             return False
         try:
-            return bool(admin_signer.loads(raw) == "owner")
+            return bool(admin_signer.loads(raw, max_age=ADMIN_MAX_AGE) == admin_token)
         except BadSignature:
             return False
+
+    def own_session(request: Request) -> str:
+        """The caller's sid, recorded in the store (first state-changing POST)."""
+        sid: str = request.state.sid
+        store.ensure_session(sid, client_ip(request))
+        return sid
 
     def err(status: int, detail: str) -> JSONResponse:
         return JSONResponse({"detail": detail}, status_code=status)
@@ -158,11 +182,10 @@ def create_public_app(
         path = request.url.path
         sid = read_sid(request)
         minted = False
-        if path.startswith("/internal/"):
-            pass  # the gate only reads the cookie, it never mints one
+        if path.startswith("/internal/") or path == "/api/health":
+            pass  # probes and the gate never mint a cookie
         elif sid is None and request.method == "GET":
             sid = secrets.token_urlsafe(24)
-            store.ensure_session(sid, client_ip(request))
             minted = True
         elif sid is None and request.method == "POST" and not path.startswith("/api/admin/"):
             return err(400, NO_COOKIE)
@@ -228,7 +251,7 @@ def create_public_app(
 
     @app.post("/api/start")
     async def start(request: Request, body: StartBody) -> Response:
-        sid: str = request.state.sid
+        sid = own_session(request)
         now = clock()
         if not (ip_limit.allow(client_ip(request), now) and sid_limit.allow(sid, now)):
             return err(429, RATE_LIMITED)
@@ -242,18 +265,18 @@ def create_public_app(
 
     @app.post("/api/stop")
     async def stop(request: Request) -> dict[str, Any]:
-        sid: str = request.state.sid
+        sid = own_session(request)
         state = await engine.dispatch(StopRequested(sid, clock()))
         return status_body(state, sid)
 
     @app.post("/api/activity", status_code=204)
     async def activity(request: Request) -> Response:
-        await engine.dispatch(Activity(request.state.sid, clock()))
+        await engine.dispatch(Activity(own_session(request), clock()))
         return Response(status_code=204)
 
     @app.post("/api/email", status_code=204)
     async def email(request: Request, body: EmailBody) -> Response:
-        sid: str = request.state.sid
+        sid = own_session(request)
         store.set_email(sid, str(body.email))
         await engine.dispatch(EmailAttached(sid, clock()))
         return Response(status_code=204)
@@ -283,13 +306,15 @@ def create_public_app(
     # -- owner admin ---------------------------------------------------------
 
     @app.post("/api/admin/login")
-    async def admin_login(body: LoginBody) -> Response:
+    async def admin_login(request: Request, body: LoginBody) -> Response:
+        if not login_limit.allow(client_ip(request), clock()):
+            return err(429, LOGIN_RATE_LIMITED)
         if not secrets.compare_digest(body.secret.encode(), settings.owner_secret.encode()):
             return err(401, LOGIN_REJECTED)
         response = JSONResponse({"ok": True})
         response.set_cookie(
             ADMIN_COOKIE,
-            admin_signer.dumps("owner"),
+            admin_signer.dumps(admin_token),
             max_age=COOKIE_MAX_AGE,
             httponly=True,
             samesite="lax",

@@ -1,4 +1,5 @@
 import asyncio
+import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -30,6 +31,7 @@ def manifest(id_, hidden=False):
     return m
 
 
+SECRETS = {"cookie_secret": "s3cret-s3cret-s3cret", "owner_secret": "owner-pw-owner-pw-1"}
 MANIFESTS = {"a": manifest("a"), "b": manifest("b"), "secret": manifest("secret", hidden=True)}
 
 
@@ -52,8 +54,7 @@ def env(tmp_path):
     hub = Hub()
     clock = Clock()
     eng = Engine(store, hub, FakeMailer(), MANIFESTS, LeaseConfig(), clock)
-    secrets_ = {"cookie_secret": "s3cret", "owner_secret": "owner-pw"}
-    settings = Settings(cookie_secure=False, **secrets_)
+    settings = Settings(cookie_secure=False, **SECRETS)
     app = create_public_app(eng, store, settings, MANIFESTS, clock)
     return app, eng, store, hub, clock
 
@@ -75,7 +76,7 @@ async def visitor(app, ip=None):
 def sid_of(c):
     from itsdangerous import URLSafeSerializer
 
-    return URLSafeSerializer("s3cret", salt="orch-sid").loads(c.cookies["orch_sid"])
+    return URLSafeSerializer("s3cret-s3cret-s3cret", salt="orch-sid").loads(c.cookies["orch_sid"])
 
 
 async def test_health_ok(env):
@@ -94,6 +95,7 @@ async def test_get_mints_cookie(env):
         assert [p["id"] for p in r.json()] == ["a", "b"]
         r2 = await c.get("/api/projects")
         assert "set-cookie" not in r2.headers
+        await c.post("/api/activity")  # visits show once the session row exists
     assert env[2].list_sessions()[0]["visits"][0]["path"] == "/api/projects"
 
 
@@ -326,7 +328,7 @@ async def test_admin_requires_secret(env):
         forger.cookies.set("orch_admin", "forged")
         assert (await forger.get("/api/admin/overview")).status_code == 401
     async with client(env[0]) as c:
-        r = await c.post("/api/admin/login", json={"secret": "owner-pw"})
+        r = await c.post("/api/admin/login", json={"secret": "owner-pw-owner-pw-1"})
         assert r.status_code == 200
         o = await c.get("/api/admin/overview")
     assert o.status_code == 200
@@ -339,7 +341,7 @@ async def test_admin_force_stop(env):
         await a.post("/api/start", json={"stack_id": "a"})
         await a.get("/api/projects")
         await a.post("/api/email", json={"email": "a@example.com"})
-        await admin.post("/api/admin/login", json={"secret": "owner-pw"})
+        await admin.post("/api/admin/login", json={"secret": "owner-pw-owner-pw-1"})
         r = await admin.post("/api/admin/force-stop")
         assert r.status_code == 200
         assert eng.state.lease is None
@@ -348,3 +350,88 @@ async def test_admin_force_stop(env):
         o = (await admin.get("/api/admin/overview")).json()
     assert o["sessions"][0]["email"] == "a@example.com"
     assert {v["path"] for v in o["recent_visits"]} == {"/api/start", "/api/projects"}
+
+
+def test_rejects_short_secrets(env):
+    _, eng, store, _, clock = env
+    for kwargs in ({"cookie_secret": "short"}, {"owner_secret": "short"}):
+        good = Settings(**{**SECRETS, "cookie_secure": False})
+        bad = good.model_copy(update=kwargs)
+        with pytest.raises(ValueError, match="at least 16"):
+            create_public_app(eng, store, bad, MANIFESTS, clock)
+
+
+async def test_admin_login_empty_secret_rejected(env):
+    async with client(env[0]) as c:
+        r = await c.post("/api/admin/login", json={"secret": ""})
+        assert r.status_code == 401
+        assert "orch_admin" not in c.cookies
+
+
+async def test_health_does_not_mint_or_store(env):
+    _, _, store, *_ = env
+    async with client(env[0]) as c:
+        for _i in range(3):
+            r = await c.get("/api/health")
+            assert "set-cookie" not in r.headers
+    assert store.list_sessions() == []
+
+
+async def test_get_mint_does_not_write_session_row(env):
+    async with client(env[0]) as c:
+        await c.get("/api/projects")
+        assert "orch_sid" in c.cookies
+    assert env[2].list_sessions() == []
+
+
+async def test_first_post_writes_session_row(env):
+    async with visitor(env[0], ip="5.6.7.8") as c:
+        assert env[2].list_sessions() == []
+        await c.post("/api/activity")
+        sid = sid_of(c)
+    rows = env[2].list_sessions()
+    assert [(r["sid"], r["ip"]) for r in rows] == [(sid, "5.6.7.8")]
+
+
+async def login(c):
+    r = await c.post("/api/admin/login", json={"secret": SECRETS["owner_secret"]})
+    assert r.status_code == 200
+
+
+async def test_admin_cookie_expires(env, monkeypatch):
+    real = time.time()
+    async with client(env[0]) as c:
+        await login(c)
+        assert (await c.get("/api/admin/overview")).status_code == 200
+        monkeypatch.setattr(time, "time", lambda: real + 13 * 3600)
+        assert (await c.get("/api/admin/overview")).status_code == 401
+
+
+async def test_admin_cookie_revoked_on_secret_rotation(env):
+    app, eng, store, _, clock = env
+    async with client(app) as c:
+        await login(c)
+        rotated = Settings(
+            cookie_secure=False,
+            **{**SECRETS, "owner_secret": "a-different-owner-secret"},
+        )
+        app2 = create_public_app(eng, store, rotated, MANIFESTS, clock)
+        async with client(app2) as c2:
+            c2.cookies.set("orch_admin", c.cookies["orch_admin"])
+            assert (await c2.get("/api/admin/overview")).status_code == 401
+        assert (await c.get("/api/admin/overview")).status_code == 200
+
+
+async def test_admin_login_rate_limited(env):
+    async with client(env[0], ip="7.7.7.7") as c:
+        codes = [
+            (await c.post("/api/admin/login", json={"secret": "x" * 20})).status_code
+            for _ in range(6)
+        ]
+    assert codes == [401] * 5 + [429]
+
+
+async def test_sid_cookie_value_not_accepted_as_admin(env):
+    async with visitor(env[0]) as c:
+        c.cookies.set("orch_admin", c.cookies["orch_sid"])
+        assert (await c.get("/api/admin/overview")).status_code == 401

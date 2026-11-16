@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from control_plane.lease import LeaseConfig
+
+MIN_SECRET_LEN = 16
 
 
 class LeaseSettings(BaseModel):
@@ -25,9 +27,9 @@ class Settings(BaseSettings):
     projects_dir: Path = Path("/srv/orch/projects")
     repos_dir: Path = Path("/srv/orch/repos")
     include_hidden: bool = False
-    cookie_secret: str
+    cookie_secret: str = Field(min_length=MIN_SECRET_LEN)
     cookie_secure: bool = True
-    owner_secret: str
+    owner_secret: str = Field(min_length=MIN_SECRET_LEN)
     resend_api_key: str | None = None
     email_from: str | None = None
     public_base_url: str = ""
