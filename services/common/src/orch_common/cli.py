@@ -12,6 +12,7 @@ from orch_common.manifest import Manifest, ManifestError, load_manifests
 from orch_common.nginx import render_projects_conf
 
 Runner = Callable[[list[str]], None]
+Probe = Callable[[list[str]], bool]
 
 
 class StepError(Exception):
@@ -21,6 +22,10 @@ class StepError(Exception):
 def _run(argv: list[str]) -> None:
     # Explicit argv list, no shell; output streams to the inherited stdout/stderr.
     subprocess.run(argv, check=True)  # noqa: S603
+
+
+def _probe(argv: list[str]) -> bool:
+    return subprocess.run(argv, capture_output=True).returncode == 0  # noqa: S603
 
 
 def _truthy(value: str | None) -> bool:
@@ -33,6 +38,7 @@ def _atomic_write(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w") as fh:
             fh.write(text)
+        os.chmod(tmp, 0o644)  # mkstemp makes 0600; nginx may run as another user
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -46,26 +52,27 @@ def _step(run: Runner, argv: list[str], what: str) -> None:
         raise StepError(f"{what} failed: {e}") from e
 
 
-def _checkout(m: Manifest, repo: str, repos: Path, run: Runner) -> None:
+def _checkout(m: Manifest, repo: str, repos: Path, run: Runner, probe: Probe) -> None:
     dest = str(m.checkout_dir(repos))
     if Path(dest).exists():
         _step(run, ["git", "-C", dest, "fetch", "--tags", "--prune", "origin"], f"{m.id}: fetch")
     else:
-        _step(run, ["git", "clone", repo, dest], f"{m.id}: clone")
-    try:
-        run(["git", "-C", dest, "checkout", "--detach", m.ref])
-    except Exception:
-        _step(
-            run,
-            ["git", "-C", dest, "checkout", "--detach", f"origin/{m.ref}"],
-            f"{m.id}: checkout {m.ref}",
-        )
+        _step(run, ["git", "clone", "--", repo, dest], f"{m.id}: clone")
+    # A branch name must resolve to the fresh remote tip, not a stale local branch;
+    # tags and SHAs have no origin/<ref> and are checked out directly.
+    remote = f"origin/{m.ref}"
+    on_remote = probe(["git", "-C", dest, "rev-parse", "--verify", "--quiet", remote])
+    _step(
+        run,
+        ["git", "-C", dest, "checkout", "--detach", remote if on_remote else m.ref],
+        f"{m.id}: checkout {m.ref}",
+    )
 
 
-def _prepare(manifests: list[Manifest], repos: Path, run: Runner) -> None:
+def _prepare(manifests: list[Manifest], repos: Path, run: Runner, probe: Probe) -> None:
     for m in manifests:
         if m.repo:
-            _checkout(m, m.repo, repos, run)
+            _checkout(m, m.repo, repos, run, probe)
     for m in manifests:
         base = ["docker", "compose", "-p", m.project_name, "-f", str(m.compose_path(repos))]
         _step(run, [*base, "build"], f"{m.id}: build")
@@ -105,7 +112,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, run: Runner = _run) -> int:
+def main(argv: list[str] | None = None, run: Runner = _run, probe: Probe = _probe) -> int:
     """Run the CLI. Returns the process exit code (0 ok, 1 failure, 2 usage)."""
     args = _parser().parse_args(argv)
     try:
@@ -120,7 +127,7 @@ def main(argv: list[str] | None = None, run: Runner = _run) -> int:
             else:
                 _atomic_write(Path(args.out), text)
         else:
-            _prepare(manifests, args.repos, run)
+            _prepare(manifests, args.repos, run, probe)
     except (ManifestError, StepError) as e:
         print(e, file=sys.stderr)
         return 1

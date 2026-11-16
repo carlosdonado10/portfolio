@@ -73,6 +73,7 @@ def test_render_writes_atomically_and_header(tmp_path: Path) -> None:
     assert "orchctl render-nginx" in text.splitlines()[0]
     assert "do not edit" in text.splitlines()[0].lower()
     assert "location /p/fast/ {" in text
+    assert out.stat().st_mode & 0o777 == 0o644
     assert [p.name for p in out.parent.iterdir()] == ["projects.conf"]  # no temp left behind
 
 
