@@ -32,7 +32,7 @@ class ComposeDriver(Protocol):
         ...
 
     async def running(self) -> set[str]:
-        """Ids (without the ``orch-`` prefix) of projects with running containers."""
+        """Ids (without the ``orch-`` prefix) of projects with any containers."""
         ...
 
 
@@ -106,7 +106,8 @@ class DockerComposeDriver:
         await self._run("docker", "compose", "-p", project_name, "down", "--remove-orphans")
 
     async def running(self) -> set[str]:
-        out = await self._run("docker", "compose", "ls", "--format", "json")
+        # --all: created/exited/half-started projects count too, so they get downed.
+        out = await self._run("docker", "compose", "ls", "--all", "--format", "json")
         try:
             rows = json.loads(out) if out.strip() else []
         except json.JSONDecodeError:

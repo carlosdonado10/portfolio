@@ -96,6 +96,10 @@ class Reconciler:
         )
         return False
 
+    async def report_crash(self, desired: DesiredState, error: str) -> None:
+        """Report FAILED for ``desired`` after an unexpected error in a cycle."""
+        await self._say(desired, StackStatus.FAILED, f"agent crashed while reconciling: {error}")
+
     async def watch_health(self, desired: DesiredState) -> None:
         """While READY, probe periodically; restart once after repeated failures."""
         m = self._manifests.get(desired.active or "")

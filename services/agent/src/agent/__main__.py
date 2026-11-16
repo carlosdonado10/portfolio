@@ -33,6 +33,8 @@ class _Converger(Protocol):
 
     async def watch_health(self, desired: DesiredState) -> None: ...
 
+    async def report_crash(self, desired: DesiredState, error: str) -> None: ...
+
 
 @dataclass(frozen=True)
 class Config:
@@ -55,7 +57,13 @@ async def _cycle(reconciler: _Converger, desired: DesiredState) -> None:
     try:
         if await reconciler.converge(desired):
             await reconciler.watch_health(desired)
-    except Exception:
+    except Exception as e:
+        # Best effort: tell the control plane, or its lease sits in STARTING until
+        # the boot watchdog fires. A failing report must not mask the crash log.
+        try:
+            await reconciler.report_crash(desired, f"{type(e).__name__}: {e}")
+        except Exception:
+            logger.warning("could not report the crash of generation %s", desired.generation)
         logger.exception("reconcile cycle for generation %s crashed", desired.generation)
 
 

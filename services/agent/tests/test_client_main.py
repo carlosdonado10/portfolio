@@ -134,6 +134,8 @@ class RecordingConverger:
         self.block_on = block_on
         self.crash_on = crash_on
         self.events: list[tuple[str, int]] = []
+        self.crashes: list[tuple[int, str]] = []
+        self.report_error: Exception | None = None
         self.started = asyncio.Event()
 
     async def converge(self, d):
@@ -153,6 +155,11 @@ class RecordingConverger:
     async def watch_health(self, d):
         self.events.append(("watch", d.generation))
         await asyncio.sleep(3600)
+
+    async def report_crash(self, d, error):
+        self.crashes.append((d.generation, error))
+        if self.report_error is not None:
+            raise self.report_error
 
 
 async def settle():
@@ -221,3 +228,27 @@ async def test_run_shutdown_cancels_current_task():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert ("cancelled", 1) in conv.events
+
+
+async def test_run_reports_failed_when_a_cycle_crashes():
+    src = ScriptedSource(DesiredState(active="a", generation=1))
+    conv = RecordingConverger(crash_on=1)
+    task = asyncio.create_task(run(src, conv))
+    await until(lambda: conv.crashes)
+    assert conv.crashes == [(1, "RuntimeError: kaboom")]
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_run_survives_a_failing_crash_report():
+    src = ScriptedSource(
+        DesiredState(active="a", generation=1), DesiredState(active="b", generation=2)
+    )
+    conv = RecordingConverger(crash_on=1)
+    conv.report_error = RuntimeError("control plane down")
+    task = asyncio.create_task(run(src, conv))
+    await until(lambda: ("watch", 2) in conv.events)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task

@@ -98,7 +98,8 @@ async def test_running_filters_orch_prefix(tmp_path):
     out = b'[{"Name":"orch-a","Status":"running(2)"},{"Name":"other","Status":"running(1)"},{"Name":"orch-b-c"}]'
     sp = Spawner(FakeProc(out=out))
     assert await DockerComposeDriver(tmp_path, sp).running() == {"a", "b-c"}
-    assert sp.argvs[0] == ("docker", "compose", "ls", "--format", "json")
+    # --all: created/exited/half-started projects must be seen so they get downed.
+    assert sp.argvs[0] == ("docker", "compose", "ls", "--all", "--format", "json")
 
 
 @pytest.mark.parametrize("out", [b"", b"  \n", b"not json", b'{"Name":"orch-a"}', b'[1,{"x":1}]'])

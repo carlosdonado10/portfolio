@@ -244,3 +244,11 @@ async def test_up_timeout_reports_failed(manifests):
     await r.converge(DesiredState(active="a", generation=2))
     assert statuses(reports) == [StackStatus.STARTING, StackStatus.FAILED]
     assert "exceeded 10 seconds" in (reports[-1].error or "")
+
+
+async def test_report_crash_reports_failed_for_the_generation(manifests):
+    r, reports, _ = build(manifests, FakeDriver(), ScriptedProbe(True))
+    await r.report_crash(DesiredState(active="a", generation=7), "RuntimeError: kaboom")
+    [o] = reports
+    assert (o.stack_id, o.status, o.generation) == ("a", StackStatus.FAILED, 7)
+    assert o.error == "agent crashed while reconciling: RuntimeError: kaboom"
