@@ -59,8 +59,9 @@ def test_idle_holder_kept_when_queue_empty():
 
 
 def test_activity_resets_idle():
-    s, _ = run(ready_a(), StartRequested("B", "b", 10), Activity("A", 170))
+    s, _ = run(ready_a(), StartRequested("B", "b", 10, has_email=True), Activity("A", 170))
     s, _ = run(s, Tick(200))
+    assert len(s.queue) == 1
     assert s.lease.grace_deadline is None
 
 
@@ -178,6 +179,7 @@ def test_switch_keeps_remaining_window():
     assert s.lease.window_ends_at is None
     assert SetDesired("b", gen + 1) in fx
     assert ("A", "stack_starting") in kinds(fx)
+    assert Broadcast("queue_changed") in fx
     s, _ = run(s, ready(s, "b", 700))
     assert s.status == StackStatus.READY
     assert s.lease.window_ends_at == 1000
@@ -200,8 +202,10 @@ def test_switch_during_grace_rejected_409():
 
 def test_no_grace_while_starting():
     s = ready_a()
-    s, _ = run(s, StartRequested("A", "b", 600), StartRequested("B", "c", 610))
+    s, _ = run(s, StartRequested("A", "b", 600), StartRequested("B", "c", 610, has_email=True))
     s, fx = run(s, Tick(950))
+    assert len(s.queue) == 1
+    assert s.status == StackStatus.STARTING
     assert s.lease.grace_deadline is None
     assert ("A", "grace_started") not in kinds(fx)
 

@@ -279,7 +279,7 @@ def _switch(state: State, lease: Lease, ev: StartRequested) -> Transition:
     # STARTING (not READY) so the new stack's first READY report is applied.
     return Transition(
         replace(state, lease=new_lease, status=StackStatus.STARTING, generation=generation),
-        (SetDesired(ev.stack_id, generation), Notify(lease.sid, "stack_starting")),
+        (SetDesired(ev.stack_id, generation), Notify(lease.sid, "stack_starting"), Broadcast()),
     )
 
 

@@ -156,11 +156,13 @@ def test_grace_started_only_once():
 
 def test_protected_window_never_interrupted():
     s, _ = run(State(), StartRequested("A", "a", 0))
-    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 1))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 1, has_email=True))
     for t in range(100, 900, 100):
-        s, fx = run(s, Tick(t))
+        s, fx = run(s, Activity("A", t - 10), Tick(t))
+        assert len(s.queue) == 1
         assert not [k for _, k in kinds(fx) if k in ("grace_started", "evicted")]
     assert s.lease.sid == "A"
+    assert s.lease.grace_deadline is None
 
 
 def test_grace_end_evicts_and_promotes_different_stack():
@@ -181,7 +183,8 @@ def test_grace_end_evicts_and_promotes_different_stack():
 
 def test_tick_before_grace_deadline_does_nothing_more():
     s, _ = run(State(), StartRequested("A", "a", 0))
-    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 1), Tick(900))
+    s, _ = run(s, ready(s, "a", 0), StartRequested("B", "b", 1, has_email=True), Tick(900))
+    assert s.lease.grace_deadline == 1080
     s2, fx = run(s, Tick(1079))
     assert s2 == s
     assert fx == []
