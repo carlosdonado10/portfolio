@@ -83,7 +83,8 @@ docs/adding-a-project.md
 - Create: `services/common/pyproject.toml` (name `orch-common`, package `orch_common`, script `orchctl`), `services/common/src/orch_common/__init__.py`, `services/common/tests/test_smoke.py`
 - Modify: root `pyproject.toml` (add `services/common` to members, add `[tool.ruff]`, `[tool.mypy] strict = true`, `[tool.pytest.ini_options]` with `asyncio_mode = "auto"` and marker `integration`), `services/control-plane/pyproject.toml` and `services/agent/pyproject.toml` (depend on `orch-common` via `[tool.uv.sources] orch-common = { workspace = true }`, add deps from Tech Stack, dev: pytest-asyncio, ruff, mypy)
 - Move: `git mv apps/landing apps/lab`, rename the package to `@portfolio/lab`, and update the root `package.json` scripts and the `Makefile`
-- Delete: `supabase/` and the Supabase block in `.env.example`. Update the Supabase comments in `docker-compose.yml`. Add a one-line "superseded by ADR 0006: no login" note to ADR 0005's auth item rather than rewriting it.
+- Delete: `supabase/` and the Supabase block in `.env.example`. Remove Supabase mentions from `docker-compose.yml`, `README.md`, `CHANGELOG.md` (add an Unreleased "Removed" entry) and the docstrings in `control_plane/app.py` and `agent/__main__.py`.
+- Delete: the `packages/design-system/` placeholder (no code, nothing imports it). Drop its `COPY` line from `apps/lab/Dockerfile` and its README tree line, and re-run `pnpm install` so the lockfile forgets it. The design-system workstream recreates it when it starts. Add a one-line "superseded by ADR 0006: no login" note to ADR 0005's auth item rather than rewriting it.
 - Create: `.pre-commit-config.yaml` (ruff, ruff-format, mypy, gitleaks, end-of-file-fixer, trailing-whitespace, check-yaml, check-toml, conventional-pre-commit on commit-msg), `.github/workflows/ci.yml` (uv sync, ruff, mypy, pytest -m "not integration", pnpm install, pnpm -r lint test build)
 - Modify: `.gitignore` (add `.venv/`, `*.sqlite*`, `infra/proxy/generated/*.conf`)
 - Create: `docs/decisions/0006-orchestrator-no-login-single-domain.md` (records no login, nginx single domain, manifest registry + per-project repos)
@@ -278,6 +279,7 @@ Rules:
 
 **Files:**
 - Create: `control_plane/api_public.py`, `control_plane/ratelimit.py`
+- Delete: `control_plane/app.py` and `tests/test_health.py`. `GET /api/health` moves into `api_public` and is covered by `test_health_ok` in `test_api_public.py`.
 - Test: `services/control-plane/tests/test_api_public.py`
 
 **Interfaces:**
@@ -337,7 +339,8 @@ Rules:
 ### Task 8: Agent reconciler
 
 **Files:**
-- Create: `services/agent/src/agent/{driver,probe,reconciler,client,main}.py`, `services/agent/Dockerfile`
+- Create: `services/agent/src/agent/{driver,probe,reconciler,client}.py`. Replace `services/agent/src/agent/__main__.py` (heartbeat stub becomes the reconciler loop). Modify `services/agent/Dockerfile`.
+- Delete: `services/agent/tests/test_heartbeat.py`.
 - Test: `services/agent/tests/test_reconciler.py`
 
 **Interfaces:**
@@ -350,7 +353,7 @@ Rules:
     - `async converge(desired: DesiredState) -> None`: downs every running `orch-*` project that isn't `desired.active`. If `active` is None, reports STOPPED. Otherwise it reports STARTING, calls `up`, polls `probe` every `health.interval_s` until healthy (report READY) or `health.timeout_s` elapses (`down`, report FAILED with error). Every report carries `desired.generation`. If a newer desired generation arrives mid-boot, the current converge is cancelled.
     - `async watch_health(desired) -> None`: while READY, probes every 10s. After **3** consecutive failures it restarts once (`down`/`up`/poll). If that also fails, it reports FAILED.
   - `ControlPlaneClient(base_url)`: `async next_desired(after: int) -> DesiredState`, `async report(o: ObservedState) -> None`, with retry and backoff (1s up to 30s) on connection errors.
-  - `main.py`: loop `desired = await client.next_desired(gen)`, then cancel the previous task and spawn `converge` then `watch_health`. On startup it fetches current desired with `after_generation=-1` and converges (crash recovery).
+  - `__main__.py`: loop `desired = await client.next_desired(gen)`, then cancel the previous task and spawn `converge` then `watch_health`. On startup it fetches current desired with `after_generation=-1` and converges (crash recovery).
 
 - [ ] **Step 1: Write failing tests** (FakeDriver records calls, ScriptedProbe returns a scripted sequence, fake clock + instant sleep):
   - `test_converge_starts_and_reports_ready`: reports `[STARTING, READY]` with generation 7.
@@ -428,6 +431,7 @@ location @interstitial_<id> { return 302 /lab/p/<id>; }
 
 **Files:**
 - Create: `apps/lab/` (Vite react-ts, `base: "/lab/"`, react-router), `src/api.ts`, `src/copy.ts`, `src/routes/{Catalog,Interstitial,Admin}.tsx`, `src/useStatus.ts`, tests beside the components. Post-build: copy `packages/notify-client/dist/notify.js` to `apps/lab/dist/notify.js`.
+- Add **knip** (unused files, exports and dependencies across the pnpm workspace), with a root `knip.json` and a pre-commit hook `pnpm exec knip` on `types_or: [ts, tsx, json]`. It must pass with zero findings.
 
 **Interfaces:**
 - Consumes: `/api/projects`, `/api/status`, `/api/start`, `/api/stop`, `/api/email`, `/api/events`, `/api/admin/*`.
@@ -454,6 +458,7 @@ location @interstitial_<id> { return 302 /lab/p/<id>; }
 - Create: `projects/_examples/{fast,slow}/{stack.toml,docker-compose.yml,app.py}`. `app.py` is a stdlib HTTP server serving `/p/<id>/` (an HTML page with `</body>`) and `/p/<id>/healthz` (503 until `READY_AFTER_S` seconds after start, then 200). fast=`2`, slow=`20` (`expected_boot_s` likewise, `timeout_s` 10 for fast and 60 for slow).
 - Create: `tests/integration/test_e2e.py`, `docs/adding-a-project.md`
 - Modify: `Makefile` (add `render`, `prepare`, `e2e`, and make `up` create the external `orch-stacks` network)
+- Delete: `apps/lab/Dockerfile` and `apps/lab/nginx.conf`, since the proxy image now builds and serves the lab. Remove the `dev-cp`/`dev-agent` Makefile targets if they no longer match the entrypoints, or update them.
 - Modify: `README.md`
 
 **Interfaces:**
@@ -471,6 +476,7 @@ location @interstitial_<id> { return 302 /lab/p/<id>; }
 - [ ] **Step 2:** Run `make e2e` (`make render prepare up && uv run pytest -m integration tests/integration -v; make down`) and expect FAIL.
 - [ ] **Step 3:** Implement the configs, example projects, compose file and Makefile, and write the onboarding doc and the README quickstart.
 - [ ] **Step 4:** Run `make e2e` and expect all five to PASS. Then run `uv run pytest -m "not integration"` and `pnpm -r test` and expect PASS.
+- [ ] **Step 4b: Orphan sweep.** `uv run vulture` and `pnpm exec knip` report nothing. `git grep -n -i "PLACEHOLDER\|supabase\|heartbeat\|apps/landing"` returns no hits outside `docs/decisions/` and `CHANGELOG.md`. Every top-level folder appears in the README tree.
 - [ ] **Step 5:** Commit `feat(infra): nginx gateway, compose, example projects, e2e`.
 
 ---

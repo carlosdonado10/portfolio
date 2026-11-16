@@ -155,3 +155,11 @@ __pycache__/
 .pytest_cache/
 .coverage
 *.sqlite*
+
+# Local tooling, not part of the platform
+.idea/
+skills-lock.json
+.agents/
+.claude/skills/
+# Separate repo (personal portfolio site) that happens to live in this folder
+PortfolioLanding/

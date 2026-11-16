@@ -79,6 +79,13 @@ repos:
         types: [python]
         pass_filenames: false
 
+      - id: vulture
+        name: vulture (no dead Python code)
+        language: system
+        entry: uv run --frozen vulture
+        types: [python]
+        pass_filenames: false
+
       - id: pytest-coverage
         name: pytest + coverage (fail under 80%)
         language: system
